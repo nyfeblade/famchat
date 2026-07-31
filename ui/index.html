@@ -137,6 +137,16 @@
   .peer-fp .via { color: var(--gold-ink); }
   .chat-head-actions { display: flex; gap: 2px; }
 
+  /* Invite banner — keeps the address to share visible while you host a room. */
+  .invite-banner { flex: none; display: flex; align-items: center; gap: 9px; padding: 8px 20px; background: var(--gold-soft); border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); }
+  .invite-banner > svg { width: 15px; height: 15px; color: var(--gold-ink); flex: none; }
+  .invite-banner .ib-label { flex: none; }
+  .invite-banner .ib-addr { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 12px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 3px 9px; user-select: all; -webkit-user-select: all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .invite-banner .ib-copy { flex: none; border: none; background: var(--gold); color: #fff; font-weight: 650; font-size: 12px; padding: 6px 13px; border-radius: 7px; cursor: pointer; }
+  .invite-banner .ib-x { flex: none; border: none; background: transparent; color: var(--ink-3); cursor: pointer; width: 24px; height: 24px; border-radius: 6px; }
+  .invite-banner .ib-x:hover { background: var(--line); color: var(--ink); }
+  .chat.empty > .invite-banner { display: none; }
+
   .messages { flex: 1; overflow-y: auto; min-height: 0; padding: 10px 0 12px; display: flex; flex-direction: column; }
 
   .day { display: flex; align-items: center; gap: 14px; margin: 12px 28px 10px; }
@@ -282,6 +292,14 @@
           <button class="icon-btn" id="leaveBtn" title="Leave this chat" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></button>
         </div>
       </header>
+
+      <div class="invite-banner" id="invite-banner" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 15V3"/><path d="m8 7 4-4 4 4"/></svg>
+        <span class="ib-label">Share to invite others:</span>
+        <span class="ib-addr" id="ib-addr"></span>
+        <button class="ib-copy" id="ib-copy">Copy</button>
+        <button class="ib-x" id="ib-close" title="Hide">✕</button>
+      </div>
 
       <div class="messages" id="messages"></div>
 

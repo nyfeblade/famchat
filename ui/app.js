@@ -30,6 +30,7 @@
   const convoList = document.getElementById('convoList');
   let sidebarSums = [];
   let activeName = '';
+  let hosting = false;   // true when we started (host) this chat, so we keep the invite address handy
 
   const leaveBtn = document.getElementById('leaveBtn');
   const attachBtn = document.querySelector('.composer .attach');
@@ -179,10 +180,11 @@
   }
 
   function showChat() { if (chatEl) chatEl.classList.remove('empty'); }
-  function showEmpty() { if (chatEl) chatEl.classList.add('empty'); lastMsgSender = null; }
+  function showEmpty() { if (chatEl) chatEl.classList.add('empty'); lastMsgSender = null; hideInviteBanner(); }
   function startThread(label, dividerText) {
     currentPeerName = label || 'Chat';
     showChat();
+    hideInviteBanner();
     lastMsgSender = null;
     msgs.innerHTML = '<div class="day"><span>' + esc(dividerText || 'Today') + '</span></div>';
     if (peerName) peerName.childNodes[0].nodeValue = currentPeerName + ' ';
@@ -290,9 +292,29 @@
     }
   });
 
+  // Invite banner shown inside the chat while you host a room, so the address to
+  // share stays reachable (a group host is dropped straight into the room).
+  const inviteBanner = document.getElementById('invite-banner');
+  const ibAddr = document.getElementById('ib-addr');
+  function showInviteBanner(addr) { if (!inviteBanner || !addr) return; ibAddr.textContent = addr; inviteBanner.style.display = 'flex'; }
+  function hideInviteBanner() { if (inviteBanner) inviteBanner.style.display = 'none'; }
+  const ibCopy = document.getElementById('ib-copy');
+  if (ibCopy) ibCopy.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(ibAddr.textContent); ibCopy.textContent = 'Copied!'; setTimeout(() => { ibCopy.textContent = 'Copy'; }, 1500); }
+    catch (e) { try { const r = document.createRange(); r.selectNodeContents(ibAddr); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); } catch (_) {} }
+  });
+  const ibClose = document.getElementById('ib-close');
+  if (ibClose) ibClose.addEventListener('click', hideInviteBanner);
+
   listen('status', (e) => {
     const s = e.payload;
-    if (s.state === 'listening') { showHostAddress(s.address); }
+    if (s.state === 'listening') {
+      inviteAddress = s.address;
+      // A 2-person host waits here showing the address until someone joins. A group
+      // host is joined into the room immediately (connected fires next), so skip the
+      // modal and hand them the address via the in-chat banner instead.
+      if (!s.group) showHostAddress(s.address);
+    }
     else if (s.state === 'connecting') { if (invStatus) invStatus.innerHTML = spin + 'Connecting… you’re in as soon as the family word matches.'; setFp('<span class="fpdot"></span> connecting…'); }
     else if (s.state === 'connected') {
       if (overlay) overlay.style.display = 'none';
@@ -302,6 +324,8 @@
       if (attachBtn) attachBtn.style.display = (s.transport === 'group') ? 'none' : 'flex';
       if (s.conversation_id) ensureSidebar(s.conversation_id, s.conversation_title);
       setFp('<span class="fpdot"></span> on your home network');
+      // Host of a group room: keep the address visible so you can still invite people.
+      if (hosting && s.transport === 'group' && inviteAddress) showInviteBanner(inviteAddress);
     }
     else if (s.state === 'error') { if (ovInvite && ovInvite.style.display !== 'none' && invStatus) { invStatus.textContent = 'Couldn’t connect: ' + s.detail; } if (ovMsg) ovMsg.textContent = 'Error: ' + s.detail; }
     else if (s.state === 'disconnected') { if (leaveBtn) leaveBtn.style.display = 'none'; showEmpty(); refreshSidebar(); }
@@ -508,6 +532,7 @@
     const group = !!(ovGroupCb && ovGroupCb.checked);
     const name = (document.getElementById('ov-name').value || '').trim();
     activeName = name;
+    hosting = ovMode === 'start';
     let joinAddress = '';
     if (ovMode === 'join') {
       joinAddress = document.getElementById('ov-addr').value.trim();
