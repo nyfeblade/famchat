@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FamChat</title>
+<style>
+  /* ============ FamChat — friendly, light, warm green accent ============ */
+  :root {
+    --font-ui: "Noto Sans", "Liberation Sans", -apple-system, system-ui, sans-serif;
+    --font-mono: "Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono", ui-monospace, monospace;
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+    /* light — clean, open, Slack-like. Gold is a restrained accent, not the field. */
+    --bg: #ffffff;
+    --surface: #f7f8fa;
+    --elevated: #ffffff;
+    --ink: #1a1d21;
+    --ink-2: #464b54;
+    --ink-3: #6a7079;
+    --line: rgba(20,23,28,0.09);
+    --line-2: rgba(20,23,28,0.15);
+    --gold: #22a06b;
+    --gold-ink: #1c8a5c;
+    --gold-soft: rgba(34,160,107,0.13);
+    --you-bg: #22a06b;
+    --you-ink: #ffffff;
+    --online: #2f9e5b;
+    --danger: #c0463a;
+    --danger-soft: rgba(192,70,58,0.11);
+    --shadow-tag: 0 1px 2px rgba(20,23,28,0.06), 0 0 0 1px rgba(20,23,28,0.04);
+    --shadow-win: 0 24px 60px rgba(20,23,28,0.18), 0 6px 16px rgba(20,23,28,0.10);
+    --outer: #e9ebef;
+    --hover: rgba(20,23,28,0.045);
+    --bubble: rgba(20,23,28,0.05);
+    --bubble-me: rgba(34,160,107,0.12);
+  }
+  /* Dark is opt-in (data-theme="dark") — a soft neutral slate, not the old heavy
+     midnight — so the default is the light, open look. A theme toggle can surface
+     this per preference later. */
+  :root[data-theme="dark"] {
+    --bg: #1a1d21; --surface: #15171a; --elevated: #242830;
+    --ink: #e8e9ea; --ink-2: #9aa0aa; --ink-3: #6a717c;
+    --line: rgba(255,255,255,0.08); --line-2: rgba(255,255,255,0.15);
+    --gold: #22a06b; --gold-ink: #4cc78e; --gold-soft: rgba(34,160,107,0.18);
+    --you-bg: #22a06b; --you-ink: #08130d;
+    --online: #46c07b;
+    --danger: #e0685c;
+    --danger-soft: rgba(224,104,92,0.16);
+    --shadow-tag: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05);
+    --shadow-win: 0 30px 80px rgba(0,0,0,0.55), 0 6px 18px rgba(0,0,0,0.4);
+    --outer: #0d0f12;
+    --hover: rgba(255,255,255,0.04);
+    --bubble: rgba(255,255,255,0.055);
+    --bubble-me: rgba(34,160,107,0.17);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+  body {
+    font-family: var(--font-ui); background: var(--bg); color: var(--ink);
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    height: 100vh; overflow: hidden;
+  }
+
+  /* Fill the whole window like a native desktop app (Slack), not a floating card:
+     no outer margin, no rounded frame. The sidebar and chat each scroll INTERNALLY
+     instead of the whole app growing with the thread — minmax(0,1fr) on the single
+     row is what lets the grid children shrink and scroll. */
+  .app {
+    width: 100vw; height: 100vh;
+    background: var(--bg);
+    display: grid; grid-template-columns: 300px 1fr;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .label { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .side-head { padding: 18px 18px 13px; display: flex; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-logo { height: 21px; width: auto; display: block; }
+  .wordmark { font-family: var(--font-ui); font-size: 17px; font-weight: 750; letter-spacing: -0.02em; color: var(--ink); }
+
+  .icon-btn { width: 32px; height: 32px; border-radius: 8px; border: none; background: transparent; color: var(--ink-2); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.15s var(--ease), color 0.15s var(--ease); }
+  .icon-btn:hover { background: var(--line); color: var(--ink); }
+  .icon-btn svg { width: 18px; height: 18px; }
+  .icon-btn.danger { color: var(--danger); }
+  .icon-btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
+
+  .search { margin: 2px 14px 8px; display: flex; align-items: center; gap: 9px; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px; color: var(--ink-3); }
+  .search svg { width: 15px; height: 15px; flex: none; }
+  .search input { border: none; background: none; outline: none; font-family: var(--font-ui); font-size: 13.5px; color: var(--ink); width: 100%; }
+  .search input::placeholder { color: var(--ink-3); }
+
+  .convo-list { flex: 1; overflow-y: auto; padding: 4px 8px 10px; min-height: 0; }
+  .list-label { padding: 12px 10px 8px; }
+
+  .convo { display: flex; align-items: center; gap: 11px; padding: 9px 10px; border-radius: 9px; cursor: pointer; transition: background 0.12s var(--ease); position: relative; }
+  .convo:hover { background: var(--line); }
+  .convo.active { background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
+  .convo.active::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 2.5px; border-radius: 2px; background: var(--gold); }
+
+  .tile { width: 40px; height: 40px; border-radius: 11px; flex: none; display: flex; align-items: center; justify-content: center; color: #fbf6ee; font-family: var(--font-mono); font-weight: 600; font-size: 15px; position: relative; box-shadow: inset 0 1px 0 rgba(255,255,255,0.18); }
+  .tile.sm { width: 30px; height: 30px; border-radius: 9px; font-size: 12px; }
+  .presence { position: absolute; bottom: -2px; right: -2px; width: 12px; height: 12px; border-radius: 4px; background: var(--online); border: 2.5px solid var(--surface); }
+  .convo.active .presence { border-color: var(--bg); }
+
+  .convo-body { flex: 1; min-width: 0; }
+  .convo-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .convo-name { font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 5px; }
+  .convo-name .seal-ic { width: 13px; height: 13px; color: var(--gold-ink); flex: none; }
+  .convo-time { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); flex: none; }
+  .convo-count { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--ink-2); background: var(--line-2); border-radius: 7px; min-width: 20px; height: 19px; padding: 0 6px; display: flex; align-items: center; justify-content: center; flex: none; }
+  .convo.active .convo-count { background: var(--gold-soft); color: var(--gold-ink); }
+  .convo-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 3px; }
+  .convo-preview { font-size: 12.8px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .badge { background: var(--gold); color: var(--you-ink); font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; min-width: 18px; height: 18px; border-radius: 6px; padding: 0 5px; display: flex; align-items: center; justify-content: center; flex: none; }
+
+  .side-foot { border-top: 1px solid var(--line); padding: 11px 13px; display: flex; align-items: center; gap: 11px; }
+  .me-name { font-size: 13.5px; font-weight: 600; }
+  .me-sub { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-2); letter-spacing: 0.04em; display: flex; align-items: center; gap: 5px; margin-top: 2px; }
+  .me-sub svg { width: 11px; height: 11px; color: var(--gold-ink); }
+
+  /* ---------- Chat ---------- */
+  .chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); }
+  .chat-head { height: 68px; flex: none; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+  .chat-peer { display: flex; align-items: center; gap: 13px; }
+  .peer-name { font-size: 15.5px; font-weight: 650; letter-spacing: -0.015em; display: flex; align-items: center; gap: 8px; }
+  .stamp { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.13em; text-transform: uppercase; color: var(--gold-ink); background: var(--gold-soft); padding: 3px 7px 3px 5px; border-radius: 5px; }
+  .stamp svg { width: 12px; height: 12px; }
+  .peer-fp { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); margin-top: 3px; display: flex; align-items: center; gap: 7px; letter-spacing: 0.02em; }
+  .peer-fp .fpdot { width: 6px; height: 6px; border-radius: 2px; background: var(--online); }
+  .peer-fp .via { color: var(--gold-ink); }
+  .chat-head-actions { display: flex; gap: 2px; }
+
+  .messages { flex: 1; overflow-y: auto; min-height: 0; padding: 10px 0 12px; display: flex; flex-direction: column; }
+
+  .day { display: flex; align-items: center; gap: 14px; margin: 12px 28px 10px; }
+  .day::before, .day::after { content: ""; height: 1px; background: var(--line); flex: 1; }
+  .day span { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
+
+  /* Slack-style flat rows: avatar + bold name + time, then full-width text.
+     Consecutive lines from the same sender append under one header, so a burst of
+     messages reads as one block rather than a stack of bubbles. */
+  .msg { display: flex; gap: 12px; padding: 3px 28px; }
+  .msg.first { margin-top: 14px; padding-top: 4px; }
+  .msg:hover { background: var(--hover); }
+  .msg-avatar { width: 38px; flex: none; }
+  .msg-avatar .tile { width: 38px; height: 38px; border-radius: 10px; }
+  .msg-content { flex: 1; min-width: 0; }
+  .msg-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 3px; }
+  .msg-name { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+  .msg.me .msg-name { color: var(--gold-ink); }
+  .msg-time { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3); }
+  /* Faint, non-opaque bubble around each message — definition without the heavy
+     iMessage look. Block + fit-content so bubbles hug their text and still stack. */
+  .msg-line { display: block; width: fit-content; max-width: min(640px, 100%);
+    font-size: 14.5px; line-height: 1.5; color: var(--ink); word-wrap: break-word; overflow-wrap: anywhere;
+    background: var(--bubble); padding: 7px 12px; border-radius: 13px; }
+  .msg.me .msg-line { background: var(--bubble-me); }
+  .msg-line + .msg-line { margin-top: 4px; }
+  .msg-line.settle { animation: settle 0.24s var(--ease) both; }
+  .msg-line.sending { opacity: 0.55; }
+  .msg-line.failed { background: var(--danger-soft); box-shadow: inset 0 0 0 1px var(--danger); }
+  @keyframes settle { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  /* Obvious "didn't send" affordance under a failed message. */
+  .send-fail { display: flex; align-items: center; gap: 6px; margin-top: 5px; font-size: 12px; font-weight: 600; color: var(--danger); }
+  .send-fail svg { width: 13px; height: 13px; flex: none; }
+  .send-fail .retry { border: none; background: none; color: var(--danger); font: inherit; text-decoration: underline; cursor: pointer; padding: 0; }
+
+  .filecard { display: inline-flex; align-items: center; gap: 12px; min-width: 220px; max-width: 340px; margin-top: 4px; padding: 10px 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; }
+  .file-ic { width: 36px; height: 36px; border-radius: 9px; flex: none; display: flex; align-items: center; justify-content: center; background: var(--gold-soft); color: var(--gold-ink); }
+  .file-ic svg { width: 18px; height: 18px; }
+  .file-meta .fname { font-size: 13.5px; font-weight: 600; }
+  .file-meta .fsize { font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); margin-top: 2px; }
+  .file-failed .file-ic { background: var(--danger-soft); color: var(--danger); }
+  .file-failed .fsize { color: var(--danger); }
+
+  .typing .dots { display: flex; gap: 4px; padding: 5px 0; }
+  .dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); animation: blink 1.3s infinite; }
+  .dots span:nth-child(2){ animation-delay: .18s; } .dots span:nth-child(3){ animation-delay: .36s; }
+  @keyframes blink { 0%,60%,100%{ opacity:.3 } 30%{ opacity:1 } }
+
+  .seal-note { flex: none; display: flex; align-items: center; justify-content: center; gap: 6px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--ink-3); padding: 8px 0; }
+  .seal-note svg { width: 11px; height: 11px; color: var(--gold-ink); }
+  .seal-note.demo { color: var(--danger); }
+  .seal-note.demo svg { color: var(--danger); }
+  .stamp.demo { color: var(--danger); background: var(--danger-soft); }
+  .fpdot.demo { background: var(--danger); }
+
+  /* Composer — a bordered box (Slack), not a pill: input on top, actions below. */
+  .composer { flex: none; padding: 4px 20px 18px; }
+  .composer-box { border: 1px solid var(--line-2); border-radius: 12px; background: var(--elevated); transition: border-color 0.15s var(--ease); }
+  .composer-box:focus-within { border-color: var(--gold); }
+  .composer-box .field-input { width: 100%; border: none; background: none; outline: none; font-family: var(--font-ui); font-size: 14.5px; color: var(--ink); padding: 13px 15px 5px; }
+  .composer-box .field-input::placeholder { color: var(--ink-3); }
+  .composer-bar { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 8px; }
+  .attach { width: 32px; height: 32px; border-radius: 8px; border: none; background: transparent; color: var(--ink-2); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .15s, color .15s; }
+  .attach:hover { background: var(--line); color: var(--ink); }
+  .attach svg { width: 18px; height: 18px; }
+  .send { width: 34px; height: 34px; border-radius: 9px; border: none; background: var(--gold); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: inset 0 1px 0 rgba(255,255,255,0.3); transition: transform .12s var(--ease); }
+  .send:hover { transform: translateY(-1px); }
+  .send svg { width: 17px; height: 17px; }
+
+  /* Empty state — shown when no conversation is open (nothing connected). */
+  .chat.empty > .chat-head, .chat.empty > .messages, .chat.empty > .seal-note, .chat.empty > .composer { display: none; }
+  .chat:not(.empty) > .empty-state { display: none; }
+  .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 40px; }
+  .empty-seal { width: 64px; height: 64px; border-radius: 18px; background: var(--gold-soft); color: var(--gold-ink); display: flex; align-items: center; justify-content: center; margin-bottom: 22px; }
+  .empty-seal svg { width: 30px; height: 30px; }
+  .empty-title { font-size: 19px; font-weight: 650; letter-spacing: -0.02em; margin-bottom: 10px; }
+  .empty-sub { font-size: 13.5px; line-height: 1.6; color: var(--ink-2); max-width: 400px; margin-bottom: 24px; }
+  .empty-cta { border: none; border-radius: 10px; padding: 12px 22px; font-size: 14px; font-weight: 650; cursor: pointer; background: var(--gold); color: #fff; }
+  .empty-cta:hover { filter: brightness(1.05); }
+
+  ::-webkit-scrollbar { width: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--ink-3); background-clip: padding-box; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <!-- ============ SIDEBAR ============ -->
+    <aside class="sidebar">
+      <div class="side-head">
+        <div class="brand">
+          <svg class="brand-logo" viewBox="0 0 24 24" fill="none" stroke="#22a06b" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.2 12 4l9 7.2"/><path d="M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9"/><path d="M9 15h6"/></svg>
+          <span class="wordmark">FamChat</span>
+        </div>
+        <button class="icon-btn" title="Start a chat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-3.6-3.6"/></svg>
+        <input placeholder="Search chats" />
+      </div>
+
+      <div class="convo-list" id="convoList"></div>
+
+      <div class="side-foot">
+        <div class="tile sm" style="background:#22a06b">Y</div>
+        <div style="flex:1">
+          <div class="me-name">You</div>
+          <div class="me-sub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5a7 7 0 0 1 14 0"/><path d="M8.5 15a3.5 3.5 0 0 1 7 0"/><circle cx="12" cy="18" r="1"/></svg>
+            PRIVATE · YOUR WI-FI
+          </div>
+        </div>
+        <button class="icon-btn" id="settingsBtn" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-1.8-.3 1.6 1.6 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.6 1.6 0 00-1-1.5 1.6 1.6 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00.3-1.8 1.6 1.6 0 00-1.5-1H3a2 2 0 110-4h.1a1.6 1.6 0 001.5-1 1.6 1.6 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9a1.6 1.6 0 001-1.5V3a2 2 0 114 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9a1.6 1.6 0 001.5 1H21a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ============ CHAT ============ -->
+    <main class="chat">
+      <div class="empty-state">
+        <div class="empty-seal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-11.9 7.8L3 21l1.7-6.1A8.5 8.5 0 1 1 21 11.5z"/></svg>
+        </div>
+        <div class="empty-title">No chat open</div>
+        <div class="empty-sub">Pick a chat on the left, or start a new one. FamChat connects the people on your home Wi-Fi — nothing goes through any server.</div>
+        <button class="empty-cta" id="empty-start">Start a chat</button>
+      </div>
+
+      <header class="chat-head">
+        <div class="chat-peer">
+          <div class="tile" style="background:linear-gradient(150deg,#22a06b,#1c8a5c)">F<span class="presence"></span></div>
+          <div>
+            <div class="peer-name">Family Room</div>
+            <div class="peer-fp"><span class="fpdot"></span> on your home network</div>
+          </div>
+        </div>
+        <div class="chat-head-actions">
+          <button class="icon-btn" id="leaveBtn" title="Leave this chat" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></button>
+        </div>
+      </header>
+
+      <div class="messages" id="messages"></div>
+
+      <div class="seal-note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5a7 7 0 0 1 14 0"/><path d="M8.5 15a3.5 3.5 0 0 1 7 0"/><circle cx="12" cy="18" r="1"/></svg>
+        PRIVATE ON YOUR HOME NETWORK · STORED ON NO SERVER
+      </div>
+
+      <div class="composer">
+        <div class="composer-box">
+          <input class="field-input" placeholder="Write a message…" />
+          <div class="composer-bar">
+            <button class="attach" title="Send file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.33 3.33 0 014.71 4.71l-9.2 9.19a1.67 1.67 0 01-2.36-2.36l8.49-8.48"/></svg></button>
+            <button class="send" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
+          </div>
+        </div>
+        <input type="file" id="fileInput" style="display:none" />
+      </div>
+    </main>
+  </div>
+
+<script src="mock.js"></script>
+<!-- ============ LIVE MODE (Tauri only; dormant in a plain browser) ============ -->
+<style>
+  #connect-overlay { display:none; position:fixed; inset:0; z-index:50; background:rgba(4,7,13,0.80); align-items:center; justify-content:center; }
+  #confirm-overlay { display:none; position:fixed; inset:0; z-index:80; background:rgba(4,7,13,0.72); align-items:center; justify-content:center; }
+  #settings-overlay { display:none; position:fixed; inset:0; z-index:62; background:rgba(4,7,13,0.55); align-items:center; justify-content:center; }
+  .set-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:6px 0 18px; border-bottom:1px solid var(--line); }
+  .set-seg { margin-bottom:0; width:150px; }
+  .set-label { font-size:13.5px; font-weight:600; color:var(--ink); }
+  .set-desc { font-size:12px; line-height:1.5; color:var(--ink-3); margin-top:4px; }
+  .set-danger { margin-top:18px; padding:14px; border:1px solid var(--danger-soft); border-radius:11px; background:var(--danger-soft); }
+  .set-danger .set-label { color:var(--danger); }
+  .set-danger .set-desc { color:var(--ink-2); margin:6px 0 13px; }
+  .ov-btn.danger-btn { background:var(--danger); color:#fff; }
+  .set-ver { text-align:center; font-family:var(--font-mono); font-size:11px; letter-spacing:0.04em; color:var(--ink-3); margin-top:16px; }
+  .confirm-card { width:344px; }
+  .cf-msg { font-size:13px; line-height:1.55; color:var(--ink-2); margin:11px 0 20px; }
+  .cf-actions { display:flex; gap:10px; }
+  .cf-actions .ov-btn { width:auto; flex:1; margin-top:0; }
+  #cf-ok.danger { background:var(--danger); color:#fff; }
+  .ov-btn.ghost { background:transparent; color:var(--ink-2); margin-top:9px; box-shadow:inset 0 0 0 1px var(--line); }
+  .ov-card { width:384px; max-width:calc(100vw - 24px); max-height:calc(100vh - 24px); overflow-y:auto; background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:24px; box-shadow:0 40px 90px rgba(0,0,0,0.55); }
+  .ov-head { display:flex; align-items:center; gap:11px; margin-bottom:20px; }
+  .ov-close { margin-left:auto; width:30px; height:30px; border-radius:8px; border:none; background:transparent; color:var(--ink-3); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background .15s, color .15s; }
+  .ov-close:hover { background:var(--line); color:var(--ink); }
+  .ov-close svg { width:16px; height:16px; }
+  .ov-seal { width:32px; height:32px; border-radius:9px; background:var(--gold); display:flex; align-items:center; justify-content:center; flex:none; }
+  .ov-seal svg { width:17px; height:17px; }
+  .ov-title { font-size:17px; font-weight:650; letter-spacing:-0.02em; }
+  .ov-seg { display:flex; gap:4px; background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:4px; margin-bottom:18px; }
+  .ov-seg-btn { flex:1; border:none; background:none; color:var(--ink-2); font-family:var(--font-ui); font-size:13.5px; font-weight:600; padding:9px; border-radius:7px; cursor:pointer; }
+  .ov-seg-btn.on { background:var(--elevated); color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,0.25); }
+  .ov-field { margin-bottom:16px; }
+  .ov-field label { display:block; font-size:12px; font-weight:600; color:var(--ink); margin-bottom:7px; }
+  .ov-field input { width:100%; background:var(--bg); border:1px solid var(--line); border-radius:9px; padding:11px 13px; color:var(--ink); font-family:var(--font-ui); font-size:14px; outline:none; }
+  .ov-field input:focus { border-color:var(--gold); }
+  .ov-hint { font-size:11.5px; line-height:1.5; color:var(--ink-3); margin-top:8px; }
+  .ov-explain { font-size:12.5px; line-height:1.6; color:var(--ink-2); background:var(--bg); border:1px solid var(--line); border-radius:9px; padding:11px 13px; margin-bottom:18px; }
+  .ov-explain .step { display:block; }
+  .ov-explain .step + .step { margin-top:5px; }
+  .ov-explain .n { display:inline-block; width:16px; color:var(--gold-ink); font-family:var(--font-mono); font-weight:700; }
+  .ov-opts { display:flex; flex-direction:column; gap:11px; margin:18px 0 20px; }
+  .ov-opt { display:flex; align-items:center; gap:9px; font-size:13px; color:var(--ink-2); cursor:pointer; }
+  .ov-opt input { width:15px; height:15px; accent-color:var(--gold); flex:none; }
+  .ov-btn { width:100%; border:none; border-radius:10px; padding:13px; font-size:14px; font-weight:650; cursor:pointer; background:var(--gold); color:#fff; }
+  .ov-msg { margin-top:14px; font-size:12px; color:var(--gold); text-align:center; min-height:16px; word-break:break-all; }
+  .inv-status { font-size:14px; font-weight:600; color:var(--ink); text-align:center; margin-bottom:16px; line-height:1.5; }
+  .inv-status .spin { display:inline-block; width:13px; height:13px; margin-right:7px; border:2px solid var(--line-2); border-top-color:var(--gold); border-radius:50%; animation:invspin 0.8s linear infinite; vertical-align:-2px; }
+  @keyframes invspin { to { transform:rotate(360deg); } }
+  .inv-label { font-size:12px; font-weight:600; color:var(--ink); margin-bottom:8px; }
+  .inv-addr { font-family:var(--font-mono); font-size:12.5px; line-height:1.5; color:var(--ink); background:var(--bg); border:1px solid var(--line-2); border-radius:9px; padding:12px 13px; word-break:break-all; user-select:all; -webkit-user-select:all; margin-bottom:12px; max-height:150px; overflow-y:auto; }
+  .inv-hint { font-size:12px; line-height:1.55; color:var(--ink-2); margin-top:14px; text-align:center; }
+</style>
+<div id="connect-overlay">
+  <div class="ov-card">
+    <div class="ov-head">
+      <div class="ov-seal"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-11.9 7.8L3 21l1.7-6.1A8.5 8.5 0 1 1 21 11.5z"/></svg></div>
+      <div class="ov-title">Start a chat</div>
+      <button class="ov-close" id="ov-close" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="ov-form">
+    <div class="ov-seg">
+      <button class="ov-seg-btn on" id="seg-start">Start a chat</button>
+      <button class="ov-seg-btn" id="seg-join">Join a chat</button>
+    </div>
+    <div id="ov-explain" class="ov-explain"></div>
+    <div class="ov-field" id="ov-addr-wrap" style="display:none">
+      <label>Their address</label>
+      <input id="ov-addr" placeholder="paste the address they shared" />
+      <div class="ov-hint">The address the host shared with you. However they sent it (text, a note) is fine.</div>
+    </div>
+    <div class="ov-field">
+      <label>Family word — everyone types the same one</label>
+      <input id="ov-code" type="password" placeholder="a word your family shares" />
+      <div class="ov-hint">Everyone in the chat types this same word to get in. Pick something you all know but others wouldn't guess.</div>
+    </div>
+    <div class="ov-opts">
+      <label class="ov-opt"><input type="checkbox" id="ov-group" /> Group — more than two people</label>
+    </div>
+    <div class="ov-field" id="ov-name-wrap">
+      <label>Chat name</label>
+      <input id="ov-name" placeholder="e.g. Mom, or Family Room" />
+    </div>
+    <button id="ov-go" class="ov-btn">Start</button>
+    <button id="ov-demo" class="ov-btn ghost">Try a demo — just you</button>
+    <div id="ov-msg" class="ov-msg"></div>
+    </div>
+    <div id="ov-invite" style="display:none">
+      <div class="inv-status" id="inv-status">Setting up your chat…</div>
+      <div id="inv-addr-wrap" style="display:none">
+        <div class="inv-label">Your chat address — share it with your family</div>
+        <div class="inv-addr" id="inv-addr"></div>
+        <button class="ov-btn" id="inv-copy">Copy address</button>
+      </div>
+      <div class="inv-hint" id="inv-hint"></div>
+      <button class="ov-btn ghost" id="inv-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+<div id="confirm-overlay">
+  <div class="ov-card confirm-card">
+    <div class="ov-title" id="cf-title">Are you sure?</div>
+    <div class="cf-msg" id="cf-msg"></div>
+    <div class="cf-actions">
+      <button class="ov-btn ghost" id="cf-cancel">Cancel</button>
+      <button class="ov-btn" id="cf-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+<div id="settings-overlay">
+  <div class="ov-card">
+    <div class="ov-head">
+      <div class="ov-seal"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-1.8-.3 1.6 1.6 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.6 1.6 0 00-1-1.5 1.6 1.6 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00.3-1.8 1.6 1.6 0 00-1.5-1H3a2 2 0 110-4h.1a1.6 1.6 0 001.5-1 1.6 1.6 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9a1.6 1.6 0 001-1.5V3a2 2 0 114 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9a1.6 1.6 0 001.5 1H21a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z"/></svg></div>
+      <div class="ov-title">Settings</div>
+      <button class="ov-close" id="set-close" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="set-row">
+      <div><div class="set-label">Appearance</div><div class="set-desc">Switch between the light and dark look.</div></div>
+      <div class="ov-seg set-seg">
+        <button class="ov-seg-btn on" id="set-light">Light</button>
+        <button class="ov-seg-btn" id="set-dark">Dark</button>
+      </div>
+    </div>
+    <div class="set-danger">
+      <div class="set-label">Danger zone</div>
+      <div class="set-desc">Permanently delete every saved chat stored on this device. This cannot be undone.</div>
+      <button class="ov-btn danger-btn" id="set-wipe">Delete all chats</button>
+    </div>
+    <div class="set-ver" id="set-ver"></div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

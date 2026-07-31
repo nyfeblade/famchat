@@ -1,0 +1,13 @@
+[workspace]
+members = ["crates/famchat-core", "src-tauri"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+authors = ["nyfe"]
+
+[profile.release]
+lto = true
+opt-level = 3
+strip = true

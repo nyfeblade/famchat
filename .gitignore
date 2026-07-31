@@ -1,0 +1,14 @@
+# Build artifacts
+/target
+**/*.rs.bk
+
+# Editor / OS cruft
+*.swp
+*.swo
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# FamChat keeps its message history in the OS config dir, never in the repo.
+history.json

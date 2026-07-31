@@ -1,0 +1,32 @@
+[package]
+name = "famchat-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "FamChat core — simple, encrypted LAN chat engine (Noise + a shared word), direct TCP. No servers, no Tor."
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+
+# Vetted cryptography — nothing hand-rolled.
+snow = "0.9"                    # Noise Protocol Framework (handshake + transport AEAD)
+spake2 = "0.4"                  # PAKE: a strong shared key from a memorable family word
+chacha20poly1305 = "0.10"      # AEAD for the identity key at rest
+argon2 = "0.5"                  # KDF for the identity key at rest
+sha2 = "0.10"                   # fingerprints
+hkdf = "0.12"                   # bind the PAKE key into the Noise PSK (domain-separated)
+x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }  # DH ratchet keys, wiped on drop
+ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }      # group Sender-Key signatures
+rand = "0.8"                    # OS CSPRNG
+zeroize = { version = "1", features = ["derive"] }  # wipe secrets from memory
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+directories = "5"
+anyhow = "1"
+hex = "0.4"
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FamChat — a simple, private chat for your home</title>
+<style>
+  :root {
+    --green: #22a06b; --green-d: #1b855a; --ink: #16261d; --ink-2: #4a5a51;
+    --bg: #f3f7f4; --card: #ffffff; --line: rgba(20,40,30,0.10);
+    --font: -apple-system, "Segoe UI", Roboto, "Noto Sans", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--ink); line-height: 1.5;
+    display: flex; flex-direction: column; align-items: center; padding: 6vh 20px 60px; }
+  .logo { width: 92px; height: 92px; border-radius: 24px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(160deg, #2bb277, var(--green-d)); box-shadow: 0 12px 30px rgba(27,133,90,0.35); margin-bottom: 22px; }
+  .logo svg { width: 52px; height: 52px; }
+  h1 { font-size: 34px; letter-spacing: -0.02em; margin-bottom: 10px; text-align: center; }
+  .tag { font-size: 17px; color: var(--ink-2); max-width: 520px; text-align: center; margin-bottom: 30px; }
+  .primary { display: inline-flex; align-items: center; gap: 10px; background: var(--green); color: #fff;
+    font-size: 17px; font-weight: 650; padding: 15px 28px; border-radius: 13px; text-decoration: none;
+    box-shadow: 0 8px 20px rgba(34,160,107,0.35); transition: transform .12s ease, filter .12s ease; }
+  .primary:hover { transform: translateY(-1px); filter: brightness(1.05); }
+  .primary svg { width: 20px; height: 20px; }
+  .others { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 18px; }
+  .other { font-size: 14px; color: var(--ink-2); text-decoration: none; padding: 9px 16px; border: 1px solid var(--line);
+    border-radius: 10px; background: var(--card); transition: border-color .12s ease, color .12s ease; }
+  .other:hover { border-color: var(--green); color: var(--green-d); }
+  .note { margin-top: 34px; max-width: 560px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px 20px; font-size: 14px; color: var(--ink-2); }
+  .note b { color: var(--ink); }
+  .steps { display: grid; gap: 22px; margin: 44px 0 0; max-width: 720px; grid-template-columns: repeat(3, 1fr); }
+  .step { text-align: center; }
+  .step .n { width: 30px; height: 30px; border-radius: 9px; background: var(--green); color: #fff; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center; margin-bottom: 10px; }
+  .step h3 { font-size: 15px; margin-bottom: 5px; }
+  .step p { font-size: 13.5px; color: var(--ink-2); }
+  footer { margin-top: 46px; font-size: 13px; color: var(--ink-2); }
+  footer a { color: var(--green-d); }
+  @media (max-width: 620px) { .steps { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 11.2 12 4l9 7.2"/><path d="M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9"/><path d="M9 15h6"/>
+    </svg>
+  </div>
+  <h1>FamChat</h1>
+  <p class="tag">A simple, private chat for the people on your home Wi-Fi. No accounts, no phone numbers, no servers — it just works on your network.</p>
+
+  <a class="primary" id="primary" href="https://github.com/nyfeblade/famchat/releases/latest">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+    <span id="primary-label">Download</span>
+  </a>
+  <div class="others" id="others"></div>
+
+  <div class="note">
+    <b>First time opening it on a Mac?</b> Because FamChat isn't signed with Apple yet, macOS shows an
+    “unidentified developer” warning the first time. Just <b>right-click the FamChat app → Open</b>, then click
+    <b>Open</b> in the dialog. You only do this once. (Windows shows a similar one-time “More info → Run anyway”.)
+  </div>
+
+  <div class="steps">
+    <div class="step"><div class="n">1</div><h3>One person starts</h3><p>Open FamChat, hit “+”, pick a family word, and share the address it gives you.</p></div>
+    <div class="step"><div class="n">2</div><h3>Everyone joins</h3><p>The others choose “Join,” paste that address, and type the same family word.</p></div>
+    <div class="step"><div class="n">3</div><h3>Chat</h3><p>You’re in — messages, photos, and files stay on your home network.</p></div>
+  </div>
+
+  <footer>Free and open source · <a href="https://github.com/nyfeblade/famchat">source on GitHub</a></footer>
+
+<script>
+  (function () {
+    var REPO = 'nyfeblade/famchat';
+    var RELEASES = 'https://github.com/' + REPO + '/releases/latest';
+    var ua = navigator.userAgent || '';
+    var os = /Mac/i.test(ua) ? 'mac' : /Win/i.test(ua) ? 'win' : /Linux|X11/i.test(ua) ? 'linux' : 'other';
+    var LABELS = { mac: 'Download for Mac', win: 'Download for Windows', linux: 'Download for Linux' };
+    var primary = document.getElementById('primary');
+    var primaryLabel = document.getElementById('primary-label');
+    var others = document.getElementById('others');
+
+    function pick(assets, os) {
+      var find = function (re) { for (var i = 0; i < assets.length; i++) if (re.test(assets[i].name)) return assets[i].browser_download_url; return null; };
+      if (os === 'mac') return find(/\.dmg$/i);
+      if (os === 'win') return find(/setup\.exe$/i) || find(/\.msi$/i) || find(/\.exe$/i);
+      if (os === 'linux') return find(/\.AppImage$/i) || find(/\.deb$/i);
+      return null;
+    }
+
+    // Try the GitHub API for direct per-OS download links to the newest build.
+    fetch('https://api.github.com/repos/' + REPO + '/releases/latest')
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (rel) {
+        var assets = rel.assets || [];
+        var links = { mac: pick(assets, 'mac'), win: pick(assets, 'win'), linux: pick(assets, 'linux') };
+        // Primary button = this visitor's OS.
+        if (LABELS[os] && links[os]) { primary.href = links[os]; primaryLabel.textContent = LABELS[os]; }
+        else { primaryLabel.textContent = 'Download'; }
+        // Other-OS links underneath.
+        ['mac', 'win', 'linux'].forEach(function (k) {
+          if (k === os) return;
+          var a = document.createElement('a');
+          a.className = 'other';
+          a.textContent = LABELS[k];
+          a.href = links[k] || RELEASES;
+          others.appendChild(a);
+        });
+      })
+      .catch(function () {
+        // No release yet or offline: send everyone to the Releases page.
+        primaryLabel.textContent = LABELS[os] || 'Download';
+        ['mac', 'win', 'linux'].forEach(function (k) {
+          if (k === os) return;
+          var a = document.createElement('a'); a.className = 'other'; a.textContent = LABELS[k]; a.href = RELEASES; others.appendChild(a);
+        });
+      });
+  })();
+</script>
+</body>
+</html>
