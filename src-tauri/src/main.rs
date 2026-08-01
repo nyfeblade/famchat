@@ -38,9 +38,10 @@ struct ChatState {
     /// task's decision on an incoming file offer `(id, accepted)`. Incoming files
     /// are NOT written to disk until the user accepts (consent gate).
     file_decisions: Mutex<Option<tokio::sync::mpsc::UnboundedSender<([u8; 16], bool)>>>,
-    /// When connected to a family hub, outgoing text is handed to the persistent
-    /// hub task through this channel (Some => a hub connection is active).
-    hub_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
+    /// When connected to a family hub, client messages (send / open-dm /
+    /// create-room) are handed to the persistent hub task through this channel
+    /// (Some => a hub connection is active).
+    hub_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<ClientMsg>>>,
 }
 
 /// The conversation currently being written to. FamChat always keeps history, so
@@ -256,19 +257,8 @@ async fn connect(
 #[tauri::command]
 async fn send_message(app: AppHandle, text: String) -> Result<(), String> {
     let st = app.state::<ChatState>();
-    // A family hub takes precedence: hand the text to the persistent hub task,
-    // which sends it (or queues it briefly if the hub is momentarily unreachable).
-    {
-        let tx = st.hub_tx.lock().await;
-        if let Some(tx) = tx.as_ref() {
-            tx.send(text.clone())
-                .map_err(|_| "the hub connection is down".to_string())?;
-            let _ = app.emit("message", json!({ "text": text, "incoming": false }));
-            persist_msg(&app, "You", &text, false).await;
-            return Ok(());
-        }
-    }
-    // A live group takes precedence over a 2-party channel.
+    // A live group takes precedence over a 2-party channel. (Family-hub sends go
+    // through `hub_send`, which targets a specific conversation.)
     {
         let g = st.group.lock().await;
         if let Some(handle) = g.as_ref() {
@@ -296,9 +286,10 @@ async fn send_message(app: AppHandle, text: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Connect to a family hub (an always-on relay + mailbox) as the standing family
-/// room. The connection is persistent and auto-reconnects; while it's up, sends go
-/// through the hub and you receive anything you missed when you were offline.
+/// Sign in to a family hub (a private chat server on an always-on machine). The
+/// connection is persistent and auto-reconnects. The hub carries every conversation
+/// — the family room, DMs, and rooms — which the UI drives via the `hub` events and
+/// the `hub_send` / `hub_open_dm` / `hub_create_room` commands.
 #[tauri::command]
 async fn connect_hub(
     app: AppHandle,
@@ -308,8 +299,6 @@ async fn connect_hub(
     id: String,
 ) -> Result<(), String> {
     let target = normalize_target(&address);
-    // The hub is one standing room; key its transcript as "Family".
-    set_active(&app, "Family", "Family").await;
     let _ = app.emit(
         "status",
         json!({ "state": "connecting", "address": target, "transport": "hub" }),
@@ -322,10 +311,56 @@ async fn connect_hub(
     Ok(())
 }
 
-/// Maintain a persistent connection to the hub: (re)connect, say Hello, then relay
-/// the family room — outgoing text from `hub_tx`, incoming messages to the UI (with
-/// an Ack so the hub can stop holding them). Loops forever until the task is aborted
-/// by a teardown, reconnecting after a short pause whenever the link drops.
+/// Hand a client message (send / open-dm / create-room) to the live hub task.
+async fn push_hub(app: &AppHandle, msg: ClientMsg) -> Result<(), String> {
+    let st = app.state::<ChatState>();
+    let tx = st.hub_tx.lock().await;
+    match tx.as_ref() {
+        Some(tx) => tx
+            .send(msg)
+            .map_err(|_| "the hub connection is down".to_string()),
+        None => Err("not connected to a hub".into()),
+    }
+}
+
+/// Post a message to a hub conversation.
+#[tauri::command]
+async fn hub_send(app: AppHandle, conv: String, text: String) -> Result<(), String> {
+    push_hub(&app, ClientMsg::Send { conv, text }).await
+}
+
+/// Open (or create) a private 1-on-1 with a person.
+#[tauri::command]
+async fn hub_open_dm(app: AppHandle, peer: String) -> Result<(), String> {
+    push_hub(&app, ClientMsg::OpenDm { peer }).await
+}
+
+/// Create a named room with the given members.
+#[tauri::command]
+async fn hub_create_room(
+    app: AppHandle,
+    title: String,
+    members: Vec<String>,
+) -> Result<(), String> {
+    push_hub(&app, ClientMsg::CreateRoom { title, members }).await
+}
+
+/// Forward one server message to the UI as a `hub` event, deduping message re-sends
+/// (by conversation) so a reconnect within a session doesn't double up.
+fn emit_hub(app: &AppHandle, sm: ServerMsg, last_seq: &mut HashMap<String, u64>) {
+    if let ServerMsg::Msg { ref conv, seq, .. } = sm {
+        let cur = last_seq.entry(conv.clone()).or_insert(0);
+        if seq <= *cur {
+            return;
+        }
+        *cur = seq;
+    }
+    let _ = app.emit("hub", sm);
+}
+
+/// Maintain a persistent connection to the hub: (re)connect, say Hello, then pump
+/// outgoing client messages and forward incoming server messages to the UI. Loops
+/// until the task is aborted by a teardown, reconnecting after a short pause.
 async fn drive_hub(
     app: AppHandle,
     target: String,
@@ -333,11 +368,10 @@ async fn drive_hub(
     device_id: String,
     my_name: String,
 ) {
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<ClientMsg>();
     *app.state::<ChatState>().hub_tx.lock().await = Some(out_tx);
-    // Highest seq we've already shown — dedups the hub's re-send of anything we
-    // hadn't acked before a drop, across reconnects.
-    let mut last_seq: u64 = 0;
+    // Per-conversation high-water mark, to dedup re-sent messages across reconnects.
+    let mut last_seq: HashMap<String, u64> = HashMap::new();
 
     loop {
         let mut link = Link::Connect {
@@ -364,7 +398,6 @@ async fn drive_hub(
             }
         };
 
-        // Introduce ourselves (stable device id + display name).
         let _ = sender
             .send(Frame::Group(
                 ClientMsg::Hello {
@@ -374,36 +407,23 @@ async fn drive_hub(
                 .encode(),
             ))
             .await;
-        let (cid, ctitle) = active_ids(&app).await;
         let _ = app.emit(
             "status",
-            json!({ "state": "connected", "transport": "hub",
-                    "conversation_id": cid, "conversation_title": ctitle }),
+            json!({ "state": "connected", "transport": "hub" }),
         );
 
         loop {
             tokio::select! {
-                Some(text) = out_rx.recv() => {
-                    if sender.send(Frame::Group(ClientMsg::Send { text }.encode())).await.is_err() {
-                        break;
-                    }
+                Some(cm) = out_rx.recv() => {
+                    if sender.send(Frame::Group(cm.encode())).await.is_err() { break; }
                 }
                 frame = receiver.recv() => {
                     match frame {
-                        Some(Frame::Group(b)) => match ServerMsg::decode(&b) {
-                            Some(ServerMsg::Msg { seq, name, text, .. }) => {
-                                if seq > last_seq {
-                                    last_seq = seq;
-                                    let _ = app.emit("message",
-                                        json!({ "text": text, "incoming": true, "from": name }));
-                                    persist_msg(&app, &name, &text, true).await;
-                                    let _ = sender
-                                        .send(Frame::Group(ClientMsg::Ack { seq }.encode()))
-                                        .await;
-                                }
+                        Some(Frame::Group(b)) => {
+                            if let Some(sm) = ServerMsg::decode(&b) {
+                                emit_hub(&app, sm, &mut last_seq);
                             }
-                            Some(ServerMsg::Welcome) | None => {}
-                        },
+                        }
                         Some(_) => {}
                         None => break, // link dropped — reconnect
                     }
@@ -411,7 +431,6 @@ async fn drive_hub(
             }
         }
 
-        // Dropped: let the UI show we're reconnecting, then loop and dial again.
         let _ = app.emit(
             "status",
             json!({ "state": "connecting", "transport": "hub", "reconnecting": true }),
@@ -860,6 +879,9 @@ fn main() {
             host,
             connect,
             connect_hub,
+            hub_send,
+            hub_open_dm,
+            hub_create_room,
             send_message,
             host_group,
             join_group,

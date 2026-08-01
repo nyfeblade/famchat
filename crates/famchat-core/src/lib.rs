@@ -32,7 +32,7 @@ pub use group::{GroupError, ReceiverState, SenderKeyDistribution, SenderKeyState
 pub use grouphost::{GroupClient, GroupHandle, GroupHost, GroupReceiver};
 pub use groupsession::{GroupMember, GroupMsg, MemberId};
 pub use history::{Conversation, ConversationSummary, History, StoredMessage};
-pub use hub::{ClientMsg, ServerMsg};
+pub use hub::{dm_id, ClientMsg, ConvKind, ConvMeta, Member, ServerMsg, FAMILY_ROOM};
 pub use identity::{fingerprint, Identity};
 pub use message::{
     human_size, FileGate, Frame, Incoming, CHUNK_SIZE, MAX_CONCURRENT_FILES, MAX_FILE_SIZE,

@@ -67,8 +67,17 @@ In FamChat: click **+ → Family hub**, then enter:
 - **Your name** — what the family sees
 
 Click **Connect**. FamChat remembers it and reconnects automatically every launch.
-You'll receive anything sent while you were away, and you can message someone whose
-FamChat is closed — they'll get it when they reopen it (as long as the hub is on).
+
+Once connected, the sidebar becomes your family space:
+
+- **People** — everyone who's signed in, with a green dot when they're online. Click
+  someone to open a private 1-on-1 with them.
+- **Rooms** — the shared **Family** room everyone's in, plus any group rooms. Hit
+  **+ New room** to make one and pick who's in it.
+
+Every conversation — the family room, DMs, and rooms — is offline-capable: you'll
+receive anything sent while you were away, and you can message someone whose FamChat
+is closed. They'll get it when they reopen it (as long as the hub is on).
 
 To stop using the hub on a device, open the chat and hit the leave button →
 **Disconnect**.

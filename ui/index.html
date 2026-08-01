@@ -338,6 +338,12 @@
   .ov-btn.set-btn-sm { width:auto; padding:8px 15px; font-size:13px; flex:none; }
   .upd-opt { margin:13px 0 2px; }
   .set-ver { text-align:center; font-family:var(--font-mono); font-size:11px; letter-spacing:0.04em; color:var(--ink-3); margin-top:16px; }
+  /* Family-hub sidebar bits */
+  .hub-newbtn { display:block; width:calc(100% - 16px); margin:2px 8px 10px; padding:8px; border:1px dashed var(--line-2); border-radius:9px; background:transparent; color:var(--ink-2); font-family:var(--font-ui); font-size:13px; cursor:pointer; transition:border-color .15s, color .15s; }
+  .hub-newbtn:hover { border-color:var(--gold); color:var(--gold-ink); }
+  #room-overlay { display:none; position:fixed; inset:0; z-index:64; background:rgba(4,7,13,0.55); align-items:center; justify-content:center; }
+  .room-people { display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto; margin:4px 0 2px; }
+  .room-people .ov-opt { margin:0; }
   .confirm-card { width:344px; }
   .cf-msg { font-size:13px; line-height:1.55; color:var(--ink-2); margin:11px 0 20px; }
   .cf-actions { display:flex; gap:10px; }
@@ -431,6 +437,25 @@
       <button class="ov-btn ghost" id="cf-cancel">Cancel</button>
       <button class="ov-btn" id="cf-ok">Confirm</button>
     </div>
+  </div>
+</div>
+<div id="room-overlay">
+  <div class="ov-card">
+    <div class="ov-head">
+      <div class="ov-seal"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+      <div class="ov-title">New room</div>
+      <button class="ov-close" id="room-close" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="ov-field">
+      <label>Room name</label>
+      <input id="room-name" placeholder="e.g. Trip planning" />
+    </div>
+    <div class="ov-field">
+      <label>Who's in it</label>
+      <div class="room-people" id="room-people"></div>
+    </div>
+    <button class="ov-btn" id="room-create">Create room</button>
+    <div class="ov-msg" id="room-msg"></div>
   </div>
 </div>
 <div id="settings-overlay">

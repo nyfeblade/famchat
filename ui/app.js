@@ -112,6 +112,7 @@
 
   function forgetHub() {
     hubActive = false;
+    hubReset();
     try {
       localStorage.removeItem('famchat-hub-address');
       localStorage.removeItem('famchat-hub-word');
@@ -347,19 +348,26 @@
       hubActive = s.transport === 'hub';
       if (overlay) overlay.style.display = 'none';
       showConnectForm();
-      startThread(s.conversation_title || activeName || 'Chat');
-      if (leaveBtn) leaveBtn.style.display = 'flex';
-      if (attachBtn) attachBtn.style.display = (s.transport === 'group' || s.transport === 'hub') ? 'none' : 'flex';
-      if (s.conversation_id) ensureSidebar(s.conversation_id, s.conversation_title);
-      setFp('<span class="fpdot"></span> ' + (s.transport === 'hub' ? 'connected to your family hub' : 'on your home network'));
-      // Host of a group room: keep the address visible so you can still invite people.
-      if (hosting && s.transport === 'group' && inviteAddress) showInviteBanner(inviteAddress);
+      if (s.transport === 'hub') {
+        // The `hub` welcome event populates people/rooms and opens a conversation.
+        if (leaveBtn) leaveBtn.style.display = 'flex';
+        setFp('<span class="fpdot"></span> connected to your family hub');
+      } else {
+        startThread(s.conversation_title || activeName || 'Chat');
+        if (leaveBtn) leaveBtn.style.display = 'flex';
+        if (attachBtn) attachBtn.style.display = (s.transport === 'group') ? 'none' : 'flex';
+        if (s.conversation_id) ensureSidebar(s.conversation_id, s.conversation_title);
+        setFp('<span class="fpdot"></span> on your home network');
+        // Host of a group room: keep the address visible so you can still invite people.
+        if (hosting && s.transport === 'group' && inviteAddress) showInviteBanner(inviteAddress);
+      }
     }
     else if (s.state === 'error') { if (ovInvite && ovInvite.style.display !== 'none' && invStatus) { invStatus.textContent = 'Couldn’t connect: ' + s.detail; } if (ovMsg) ovMsg.textContent = 'Error: ' + s.detail; }
     else if (s.state === 'disconnected') { if (leaveBtn) leaveBtn.style.display = 'none'; showEmpty(); refreshSidebar(); }
   });
 
   async function refreshSidebar() {
+    if (hub.on) { renderHubSidebar(); return; }
     try { renderSidebar(await invoke('list_conversations')); } catch (e) {}
   }
 
@@ -397,6 +405,14 @@
       const reply = demoReplies[demoReplyIdx % demoReplies.length];
       demoReplyIdx++;
       setTimeout(() => { if (demoMode) addMsg(reply, true); }, 700);
+      return;
+    }
+    // Family hub: send to the open conversation.
+    if (hub.on && hub.active) {
+      const hline = addHubLine(hub.active, 'You', text, true);
+      if (hline) hline.classList.add('sending');
+      try { await invoke('hub_send', { conv: hub.active, text }); if (hline) hline.classList.remove('sending'); }
+      catch (err) { if (hline) markSendFailed(hline, text, err); }
       return;
     }
     const line = addMsg(text, false);
@@ -723,6 +739,124 @@
     }
   }
   if (updBtn) updBtn.addEventListener('click', () => checkForUpdate(true));
+
+  // ---- Family hub: people, DMs, rooms, presence -------------------------------
+  const hub = { on: false, myId: null, dir: {}, online: {}, convs: {}, buf: {}, active: null, unread: {}, pendingOpen: null, creatingRoom: false };
+  function hubName(id) { return hub.dir[id] || 'Someone'; }
+  function dmConvId(peer) { const a = hub.myId, b = peer; return a <= b ? 'dm:' + a + ':' + b : 'dm:' + b + ':' + a; }
+  function convTitle(c) {
+    if (!c) return 'Chat';
+    if (c.kind === 'room') return c.title || 'Room';
+    const other = (c.members || []).find((m) => m !== hub.myId);
+    return other ? hubName(other) : 'Chat';
+  }
+  function hubTextLine(text) { const d = document.createElement('div'); d.className = 'msg-line settle'; d.textContent = text; return d; }
+  function addHubLine(cid, name, text, me) {
+    if (!hub.buf[cid]) hub.buf[cid] = [];
+    hub.buf[cid].push({ name, text, me });
+    if (cid === hub.active) { const line = hubTextLine(text); appendLine(me ? 'You' : name, me, line); return line; }
+    return null;
+  }
+  function renderHubThread(cid) {
+    const c = hub.convs[cid];
+    showChat(); hideInviteBanner(); lastMsgSender = null;
+    currentPeerName = convTitle(c);
+    if (peerName) peerName.childNodes[0].nodeValue = currentPeerName + ' ';
+    if (headTile) { headTile.style.background = c && c.id === 'room:family' ? '#22a06b' : avatarColor(currentPeerName); if (headTile.firstChild) headTile.firstChild.nodeValue = initialOf(currentPeerName); }
+    const label = c && c.kind === 'room' ? 'Room' : 'Direct message';
+    msgs.innerHTML = '<div class="day"><span>' + esc(label) + '</span></div>';
+    for (const m of (hub.buf[cid] || [])) appendLine(m.me ? 'You' : m.name, m.me, hubTextLine(m.text));
+    scrollDown();
+    setFp('<span class="fpdot"></span> ' + (c && c.kind === 'room' ? ((c.members || []).length + ' people · via hub') : 'via your family hub'));
+  }
+  function openHubConv(cid) {
+    if (!hub.convs[cid]) return;
+    hub.active = cid; hub.unread[cid] = 0;
+    if (leaveBtn) leaveBtn.style.display = 'flex';
+    if (attachBtn) attachBtn.style.display = 'none';
+    renderHubThread(cid);
+    renderHubSidebar();
+  }
+  function openDm(peer) {
+    const cid = dmConvId(peer);
+    if (hub.convs[cid]) openHubConv(cid);
+    else { hub.pendingOpen = cid; invoke('hub_open_dm', { peer }).catch(() => {}); }
+  }
+  function renderHubSidebar() {
+    if (!hub.on) return;
+    const rooms = Object.values(hub.convs).filter((c) => c.kind === 'room')
+      .sort((a, b) => (a.id === 'room:family' ? -1 : b.id === 'room:family' ? 1 : convTitle(a).localeCompare(convTitle(b))));
+    const people = Object.keys(hub.dir).filter((id) => id !== hub.myId).sort((a, b) => hubName(a).localeCompare(hubName(b)));
+    const tile = (label, color, dot) => '<div class="tile" style="background:' + color + '">' + esc(initialOf(label)) + (dot ? '<span class="presence"></span>' : '') + '</div>';
+    const row = (attr, key, label, color, dot, active, unread) =>
+      '<div class="convo ' + (active ? 'active' : '') + '" ' + attr + '="' + esc(key) + '">' + tile(label, color, dot) +
+      '<div class="convo-body"><div class="convo-top"><div class="convo-name">' + esc(label) + '</div>' +
+      (unread ? '<div class="convo-count">' + (unread > 99 ? '99+' : unread) + '</div>' : '') + '</div></div></div>';
+    let html = '<div class="list-label label">Rooms</div>';
+    html += rooms.map((c) => row('data-conv', c.id, convTitle(c), c.id === 'room:family' ? '#22a06b' : avatarColor(convTitle(c)), false, hub.active === c.id, hub.unread[c.id])).join('');
+    html += '<button class="hub-newbtn" id="hub-newroom">+ New room</button>';
+    html += '<div class="list-label label">People</div>';
+    if (!people.length) html += '<div style="padding:6px 12px;color:var(--ink-3);font-size:12.5px">No one else has signed in yet.</div>';
+    html += people.map((id) => row('data-person', id, hubName(id), avatarColor(hubName(id)), !!hub.online[id], hub.active === dmConvId(id), hub.unread[dmConvId(id)])).join('');
+    convoList.innerHTML = html;
+    convoList.querySelectorAll('[data-conv]').forEach((el) => el.addEventListener('click', () => openHubConv(el.getAttribute('data-conv'))));
+    convoList.querySelectorAll('[data-person]').forEach((el) => el.addEventListener('click', () => openDm(el.getAttribute('data-person'))));
+    const nr = document.getElementById('hub-newroom'); if (nr) nr.addEventListener('click', newRoomFlow);
+  }
+  function hubReset() { hub.on = false; hub.myId = null; hub.dir = {}; hub.online = {}; hub.convs = {}; hub.buf = {}; hub.active = null; hub.unread = {}; }
+
+  const roomOverlay = document.getElementById('room-overlay');
+  const roomNameInput = document.getElementById('room-name');
+  const roomPeople = document.getElementById('room-people');
+  const roomMsg = document.getElementById('room-msg');
+  function newRoomFlow() {
+    const people = Object.keys(hub.dir).filter((id) => id !== hub.myId);
+    roomPeople.innerHTML = people.length
+      ? people.map((id) => '<label class="ov-opt"><input type="checkbox" value="' + esc(id) + '"> ' + esc(hubName(id)) + '</label>').join('')
+      : '<div class="ov-hint">No one else has signed in to the hub yet.</div>';
+    if (roomNameInput) roomNameInput.value = '';
+    if (roomMsg) roomMsg.textContent = '';
+    if (roomOverlay) roomOverlay.style.display = 'flex';
+    if (roomNameInput) roomNameInput.focus();
+  }
+  const roomCreate = document.getElementById('room-create');
+  const roomClose = document.getElementById('room-close');
+  if (roomClose) roomClose.addEventListener('click', () => { roomOverlay.style.display = 'none'; });
+  if (roomOverlay) roomOverlay.addEventListener('click', (e) => { if (e.target === roomOverlay) roomOverlay.style.display = 'none'; });
+  if (roomCreate) roomCreate.addEventListener('click', async () => {
+    const title = (roomNameInput.value || '').trim();
+    if (!title) { roomMsg.textContent = 'Give the room a name.'; return; }
+    const members = Array.from(roomPeople.querySelectorAll('input:checked')).map((i) => i.value);
+    roomOverlay.style.display = 'none';
+    hub.creatingRoom = true;
+    try { await invoke('hub_create_room', { title, members }); } catch (e) {}
+  });
+
+  listen('hub', (e) => {
+    const p = e.payload;
+    if (p.t === 'welcome') {
+      hub.on = true; hub.myId = p.you;
+      hub.dir = {}; (p.members || []).forEach((m) => { hub.dir[m.id] = m.name; });
+      hub.online = {}; (p.online || []).forEach((id) => { hub.online[id] = true; });
+      hub.convs = {}; (p.convs || []).forEach((c) => { hub.convs[c.id] = c; });
+      hub.buf = {};
+      renderHubSidebar();
+      const keep = hub.active && hub.convs[hub.active] ? hub.active : (hub.convs['room:family'] ? 'room:family' : null);
+      if (keep) openHubConv(keep); else showEmpty();
+    } else if (p.t === 'msg') {
+      addHubLine(p.conv, p.name, p.text, false);
+      if (p.conv !== hub.active) { hub.unread[p.conv] = (hub.unread[p.conv] || 0) + 1; renderHubSidebar(); }
+      if (!document.hasFocus()) notify(p.name || 'FamChat', p.text);
+    } else if (p.t === 'conv') {
+      const c = p.meta; hub.convs[c.id] = c; renderHubSidebar();
+      if (hub.pendingOpen === c.id) { hub.pendingOpen = null; openHubConv(c.id); }
+      else if (hub.creatingRoom && c.kind === 'room') { hub.creatingRoom = false; openHubConv(c.id); }
+    } else if (p.t === 'members') {
+      hub.dir = {}; (p.members || []).forEach((m) => { hub.dir[m.id] = m.name; }); renderHubSidebar();
+    } else if (p.t === 'presence') {
+      hub.online = {}; (p.online || []).forEach((id) => { hub.online[id] = true; }); renderHubSidebar();
+    }
+  });
 
   async function boot() {
     ensureNotifyPermission();

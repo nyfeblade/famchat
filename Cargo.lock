@@ -1148,7 +1148,7 @@ dependencies = [
 
 [[package]]
 name = "famchat"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "famchat-core",
  "hex",
@@ -1187,7 +1187,7 @@ dependencies = [
 
 [[package]]
 name = "famchat-hub"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "directories",
  "famchat-core",

@@ -1,10 +1,11 @@
-//! FamChat Hub — a headless, always-on relay + mailbox for one family room.
+//! FamChat Hub — a small, always-on private chat server for one family.
 //!
-//! Every FamChat client opens a normal sealed channel to the hub (Noise,
-//! authenticated by the family word). The hub is the trusted endpoint: it reads
-//! each message, appends it to one ordered log, delivers it live to whoever is
-//! connected, and holds it for anyone offline — replaying what they missed the
-//! moment they reconnect. State is persisted so a restart doesn't lose the queue.
+//! Clients open one sealed channel each (Noise, authenticated by the family word)
+//! and sign in with a stable device id + name. Through that single connection the
+//! hub carries the whole-family room, private DMs, and custom rooms — each its own
+//! thread with its own ordered log and per-person cursor. Anyone offline is replayed
+//! exactly what they missed the moment they reconnect. State persists across
+//! restarts. The hub is trusted: it decrypts, stores, and routes.
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
@@ -12,13 +13,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use famchat_core::{
-    Auth, ClientMsg, Established, Frame, Link, SealedChannel, ServerMsg, TcpTransport, Transport,
+    dm_id, Auth, ClientMsg, ConvKind, ConvMeta, Established, Frame, Link, Member, SealedChannel,
+    ServerMsg, TcpTransport, Transport, FAMILY_ROOM,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex};
 
-/// Hard cap on retained messages, so the log can't grow without bound even if a
-/// member never comes back to acknowledge older ones. Plenty for a family.
+/// Push channel to one connected member's socket.
+type Push = mpsc::UnboundedSender<ServerMsg>;
+
+/// Hard per-conversation cap on retained messages.
 const MAX_LOG: usize = 20_000;
 
 fn now_ts() -> i64 {
@@ -28,7 +32,6 @@ fn now_ts() -> i64 {
         .unwrap_or(0)
 }
 
-/// One stored message in the family room's ordered log.
 #[derive(Serialize, Deserialize, Clone)]
 struct LogEntry {
     seq: u64,
@@ -38,22 +41,49 @@ struct LogEntry {
     ts: i64,
 }
 
-/// The durable state (persisted to disk).
-#[derive(Serialize, Deserialize, Default)]
-struct Persisted {
-    next_seq: u64,
+/// One conversation (the family room, a DM, or a custom room).
+#[derive(Serialize, Deserialize)]
+struct Conv {
+    kind: ConvKind,
+    title: String,
+    members: Vec<String>,
+    #[serde(default)]
     log: Vec<LogEntry>,
-    /// member id -> highest seq they've acknowledged.
+    #[serde(default)]
     cursors: HashMap<String, u64>,
-    /// member id -> latest display name.
-    names: HashMap<String, String>,
+    #[serde(default)]
+    next_seq: u64,
 }
 
-/// Hub state: durable data plus the live push-channels for connected members.
+impl Conv {
+    fn meta(&self, id: &str) -> ConvMeta {
+        ConvMeta {
+            id: id.to_string(),
+            kind: self.kind,
+            title: self.title.clone(),
+            members: self.members.clone(),
+        }
+    }
+    fn has(&self, member: &str) -> bool {
+        self.members.iter().any(|m| m == member)
+    }
+}
+
+/// Durable state persisted to disk.
+#[derive(Serialize, Deserialize, Default)]
+struct Persisted {
+    /// member id -> display name (the family directory).
+    #[serde(default)]
+    members: HashMap<String, String>,
+    /// conversation id -> conversation.
+    #[serde(default)]
+    convs: HashMap<String, Conv>,
+}
+
+/// Hub state: durable data plus live push-channels for connected members.
 pub struct Hub {
     p: Persisted,
-    /// member id -> channel that pushes messages to their live connection.
-    online: HashMap<String, mpsc::UnboundedSender<ServerMsg>>,
+    online: HashMap<String, Push>,
     path: PathBuf,
 }
 
@@ -70,7 +100,6 @@ impl Hub {
         }
     }
 
-    /// Write durable state to disk atomically (temp file + rename).
     fn persist(&self) {
         if let Some(dir) = self.path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -83,17 +112,80 @@ impl Hub {
         }
     }
 
-    /// Keep the log bounded (drop the oldest beyond the cap).
-    fn cap_log(&mut self) {
-        if self.p.log.len() > MAX_LOG {
-            let excess = self.p.log.len() - MAX_LOG;
-            self.p.log.drain(0..excess);
+    /// Make sure the whole-family room exists and includes `id`.
+    fn ensure_family(&mut self, id: &str) {
+        let fam = self
+            .p
+            .convs
+            .entry(FAMILY_ROOM.to_string())
+            .or_insert_with(|| Conv {
+                kind: ConvKind::Room,
+                title: "Family".into(),
+                members: Vec::new(),
+                log: Vec::new(),
+                cursors: HashMap::new(),
+                next_seq: 0,
+            });
+        if !fam.has(id) {
+            fam.members.push(id.to_string());
         }
+    }
+
+    fn directory(&self) -> Vec<Member> {
+        self.p
+            .members
+            .iter()
+            .map(|(id, name)| Member {
+                id: id.clone(),
+                name: name.clone(),
+            })
+            .collect()
+    }
+
+    fn online_ids(&self) -> Vec<String> {
+        self.online.keys().cloned().collect()
+    }
+
+    fn metas_for(&self, id: &str) -> Vec<ConvMeta> {
+        self.p
+            .convs
+            .iter()
+            .filter(|(_, c)| c.has(id))
+            .map(|(cid, c)| c.meta(cid))
+            .collect()
+    }
+
+    /// Everything `id` hasn't yet acknowledged, across every conversation they're in.
+    fn backlog_for(&self, id: &str) -> Vec<ServerMsg> {
+        let mut out = Vec::new();
+        for (cid, c) in &self.p.convs {
+            if !c.has(id) {
+                continue;
+            }
+            let cur = c.cursors.get(id).copied().unwrap_or(0);
+            for e in c.log.iter().filter(|e| e.seq > cur) {
+                out.push(ServerMsg::Msg {
+                    conv: cid.clone(),
+                    seq: e.seq,
+                    from: e.from.clone(),
+                    name: e.name.clone(),
+                    text: e.text.clone(),
+                    ts: e.ts,
+                });
+            }
+        }
+        out
+    }
+
+    fn pushes_for(&self, ids: &[String], except: Option<&str>) -> Vec<Push> {
+        ids.iter()
+            .filter(|m| except.map_or(true, |ex| m.as_str() != ex))
+            .filter_map(|m| self.online.get(m).cloned())
+            .collect()
     }
 }
 
-/// Bind and serve forever: accept clients and hand each to a task. Never returns
-/// under normal operation.
+/// Bind and serve forever.
 pub async fn run(bind: &str, word: String, data: PathBuf) {
     let hub = Arc::new(Mutex::new(Hub::load(data.clone())));
     let listener = match TcpTransport.listen(bind).await {
@@ -122,21 +214,18 @@ pub async fn serve(listener: Box<dyn famchat_core::Listener>, word: String, hub:
                 let hub = hub.clone();
                 tokio::spawn(handle_client(hub, est));
             }
-            // A failed handshake just means keep waiting for the next client.
             Err(_) => continue,
         }
     }
 }
 
-/// Serve one connected client for the life of its connection.
 async fn handle_client(hub: Arc<Mutex<Hub>>, est: Established) {
     let (sender, mut receiver) = match SealedChannel::establish(est).await {
         Ok(pair) => pair,
         Err(_) => return,
     };
 
-    // The first thing a client sends is Hello. Ignore anything else until we have
-    // it; give up if the connection closes first.
+    // Sign in.
     let (id, name) = loop {
         match receiver.recv().await {
             Some(Frame::Group(b)) => {
@@ -149,42 +238,49 @@ async fn handle_client(hub: Arc<Mutex<Hub>>, est: Established) {
         }
     };
 
-    // Register as online and read back our cursor.
     let (tx, mut rx) = mpsc::unbounded_channel::<ServerMsg>();
-    let cursor = {
+    let (welcome, backlog, dir_targets, members_msg, presence_msg) = {
         let mut h = hub.lock().await;
-        h.p.names.insert(id.clone(), name.clone());
-        h.online.insert(id.clone(), tx);
+        h.p.members.insert(id.clone(), name.clone());
+        h.ensure_family(&id);
+        h.online.insert(id.clone(), tx.clone());
         h.persist();
-        h.p.cursors.get(&id).copied().unwrap_or(0)
+        let dir = h.directory();
+        let online = h.online_ids();
+        let welcome = ServerMsg::Welcome {
+            you: id.clone(),
+            members: dir.clone(),
+            convs: h.metas_for(&id),
+            online: online.clone(),
+        };
+        let backlog = h.backlog_for(&id);
+        let dir_targets: Vec<Push> = h.online.values().cloned().collect();
+        (
+            welcome,
+            backlog,
+            dir_targets,
+            ServerMsg::Members { members: dir },
+            ServerMsg::Presence { online },
+        )
     };
-    println!("famchat-hub: + {name} ({id}) online");
 
-    // Welcome, then replay everything they missed (seq > cursor).
-    if sender
-        .send(Frame::Group(ServerMsg::Welcome.encode()))
-        .await
-        .is_err()
-    {
+    if sender.send(Frame::Group(welcome.encode())).await.is_err() {
         go_offline(&hub, &id).await;
         return;
     }
-    let backlog: Vec<ServerMsg> = {
-        let h = hub.lock().await;
-        h.p.log
-            .iter()
-            .filter(|e| e.seq > cursor)
-            .map(entry_to_msg)
-            .collect()
-    };
     for m in backlog {
         if sender.send(Frame::Group(m.encode())).await.is_err() {
             go_offline(&hub, &id).await;
             return;
         }
     }
+    // Tell everyone the directory + who's online changed.
+    for t in &dir_targets {
+        let _ = t.send(members_msg.clone());
+        let _ = t.send(presence_msg.clone());
+    }
+    println!("famchat-hub: + {name} ({id}) online");
 
-    // Live loop: push queued messages out, and take in the client's sends/acks.
     loop {
         tokio::select! {
             Some(out) = rx.recv() => {
@@ -193,14 +289,31 @@ async fn handle_client(hub: Arc<Mutex<Hub>>, est: Established) {
             frame = receiver.recv() => {
                 match frame {
                     Some(Frame::Group(b)) => match ClientMsg::decode(&b) {
-                        Some(ClientMsg::Send { text }) => handle_send(&hub, &id, &name, text).await,
-                        Some(ClientMsg::Ack { seq }) => {
+                        Some(ClientMsg::Send { conv, text }) => {
+                            let out = { let mut h = hub.lock().await; do_send(&mut h, &id, &conv, text) };
+                            if let Some((msg, targets)) = out {
+                                for t in targets { let _ = t.send(msg.clone()); }
+                            }
+                        }
+                        Some(ClientMsg::Ack { conv, seq }) => {
                             let mut h = hub.lock().await;
-                            let c = h.p.cursors.entry(id.clone()).or_insert(0);
-                            if seq > *c { *c = seq; }
+                            if let Some(c) = h.p.convs.get_mut(&conv) {
+                                let cur = c.cursors.entry(id.clone()).or_insert(0);
+                                if seq > *cur { *cur = seq; }
+                            }
                             h.persist();
                         }
-                        _ => {}
+                        Some(ClientMsg::OpenDm { peer }) => {
+                            let (meta, targets) = { let mut h = hub.lock().await; open_dm(&mut h, &id, &peer) };
+                            let m = ServerMsg::Conv { meta };
+                            for t in targets { let _ = t.send(m.clone()); }
+                        }
+                        Some(ClientMsg::CreateRoom { title, members }) => {
+                            let (meta, targets) = { let mut h = hub.lock().await; create_room(&mut h, &id, title, members) };
+                            let m = ServerMsg::Conv { meta };
+                            for t in targets { let _ = t.send(m.clone()); }
+                        }
+                        Some(ClientMsg::Hello { .. }) | None => {}
                     },
                     Some(_) => {}
                     None => break,
@@ -209,61 +322,120 @@ async fn handle_client(hub: Arc<Mutex<Hub>>, est: Established) {
         }
     }
 
-    go_offline(&hub, &id).await;
+    // Offline: drop the push channel and tell everyone who's still online.
+    let (targets, online) = {
+        let mut h = hub.lock().await;
+        h.online.remove(&id);
+        let online = h.online_ids();
+        (h.online.values().cloned().collect::<Vec<_>>(), online)
+    };
+    let pres = ServerMsg::Presence { online };
+    for t in targets {
+        let _ = t.send(pres.clone());
+    }
     println!("famchat-hub: - {name} ({id}) offline");
 }
 
-/// Append a new message, mark it delivered to its sender (they rendered it
-/// locally), persist, and push it to every other member who is online.
-async fn handle_send(hub: &Arc<Mutex<Hub>>, from_id: &str, from_name: &str, text: String) {
-    let (msg, targets) = {
-        let mut h = hub.lock().await;
-        let seq = h.p.next_seq + 1;
-        h.p.next_seq = seq;
+/// Append a message to a conversation the sender belongs to, mark it delivered to
+/// them, persist, and return the broadcast + the online recipients (minus sender).
+fn do_send(h: &mut Hub, from_id: &str, conv: &str, text: String) -> Option<(ServerMsg, Vec<Push>)> {
+    let name = h.p.members.get(from_id).cloned().unwrap_or_default();
+    let (seq, ts, members) = {
+        let c = h.p.convs.get_mut(conv)?;
+        if !c.has(from_id) {
+            return None;
+        }
+        let seq = c.next_seq + 1;
+        c.next_seq = seq;
         let ts = now_ts();
-        h.p.log.push(LogEntry {
+        c.log.push(LogEntry {
             seq,
             from: from_id.to_string(),
-            name: from_name.to_string(),
+            name: name.clone(),
             text: text.clone(),
             ts,
         });
-        h.p.cursors.insert(from_id.to_string(), seq);
-        h.cap_log();
-        h.persist();
-        let msg = ServerMsg::Msg {
-            seq,
-            from: from_id.to_string(),
-            name: from_name.to_string(),
-            text,
-            ts,
-        };
-        let targets: Vec<_> = h
-            .online
-            .iter()
-            .filter(|(mid, _)| mid.as_str() != from_id)
-            .map(|(_, tx)| tx.clone())
-            .collect();
-        (msg, targets)
+        c.cursors.insert(from_id.to_string(), seq);
+        if c.log.len() > MAX_LOG {
+            let excess = c.log.len() - MAX_LOG;
+            c.log.drain(0..excess);
+        }
+        (seq, ts, c.members.clone())
     };
-    for tx in targets {
-        let _ = tx.send(msg.clone());
-    }
+    h.persist();
+    let msg = ServerMsg::Msg {
+        conv: conv.to_string(),
+        seq,
+        from: from_id.to_string(),
+        name,
+        text,
+        ts,
+    };
+    let targets = h.pushes_for(&members, Some(from_id));
+    Some((msg, targets))
 }
 
-/// Remove this member's live push-channel (called when their connection ends).
+/// Open (creating if needed) a DM between `id` and `peer`. Returns its meta and the
+/// online members to notify.
+fn open_dm(h: &mut Hub, id: &str, peer: &str) -> (ConvMeta, Vec<Push>) {
+    let cid = dm_id(id, peer);
+    if !h.p.convs.contains_key(&cid) {
+        h.p.convs.insert(
+            cid.clone(),
+            Conv {
+                kind: ConvKind::Dm,
+                title: String::new(),
+                members: vec![id.to_string(), peer.to_string()],
+                log: Vec::new(),
+                cursors: HashMap::new(),
+                next_seq: 0,
+            },
+        );
+        h.persist();
+    }
+    let c = &h.p.convs[&cid];
+    let meta = c.meta(&cid);
+    let targets = h.pushes_for(&meta.members, None);
+    (meta, targets)
+}
+
+/// Create a named room with `id` plus the given members.
+fn create_room(
+    h: &mut Hub,
+    id: &str,
+    title: String,
+    mut members: Vec<String>,
+) -> (ConvMeta, Vec<Push>) {
+    if !members.iter().any(|m| m == id) {
+        members.push(id.to_string());
+    }
+    members.sort();
+    members.dedup();
+    let cid = format!("room:{}", famchat_core::new_conversation_id());
+    h.p.convs.insert(
+        cid.clone(),
+        Conv {
+            kind: ConvKind::Room,
+            title: title.clone(),
+            members: members.clone(),
+            log: Vec::new(),
+            cursors: HashMap::new(),
+            next_seq: 0,
+        },
+    );
+    h.persist();
+    let meta = ConvMeta {
+        id: cid,
+        kind: ConvKind::Room,
+        title,
+        members: members.clone(),
+    };
+    let targets = h.pushes_for(&members, None);
+    (meta, targets)
+}
+
 async fn go_offline(hub: &Arc<Mutex<Hub>>, id: &str) {
     hub.lock().await.online.remove(id);
-}
-
-fn entry_to_msg(e: &LogEntry) -> ServerMsg {
-    ServerMsg::Msg {
-        seq: e.seq,
-        from: e.from.clone(),
-        name: e.name.clone(),
-        text: e.text.clone(),
-        ts: e.ts,
-    }
 }
 
 /// Resolved runtime configuration.
@@ -293,7 +465,6 @@ impl Config {
                 _ => {}
             }
         }
-
         Config {
             word,
             bind,
@@ -340,17 +511,30 @@ mod tests {
         (s, r)
     }
 
-    /// Read frames until a `Msg` arrives (skipping Welcome), or time out.
-    async fn next_msg_text(r: &mut SealedReceiver) -> Option<String> {
+    async fn send(s: &SealedSender, m: ClientMsg) {
+        s.send(Frame::Group(m.encode())).await.unwrap();
+    }
+
+    async fn recv_sm(r: &mut SealedReceiver) -> Option<ServerMsg> {
+        match r.recv().await {
+            Some(Frame::Group(b)) => ServerMsg::decode(&b),
+            _ => None,
+        }
+    }
+
+    /// Read server messages until one matches `pred`, or time out.
+    async fn wait_for<F: Fn(&ServerMsg) -> bool>(
+        r: &mut SealedReceiver,
+        pred: F,
+    ) -> Option<ServerMsg> {
         let fut = async {
             loop {
-                match r.recv().await {
-                    Some(Frame::Group(b)) => {
-                        if let Some(ServerMsg::Msg { text, .. }) = ServerMsg::decode(&b) {
-                            return Some(text);
+                match recv_sm(r).await {
+                    Some(m) => {
+                        if pred(&m) {
+                            return Some(m);
                         }
                     }
-                    Some(_) => {}
                     None => return None,
                 }
             }
@@ -358,8 +542,6 @@ mod tests {
         timeout(Duration::from_secs(5), fut).await.ok().flatten()
     }
 
-    /// Poll the hub's on-disk state until it contains `needle`, so the test waits
-    /// on the hub actually processing a message rather than a fixed sleep.
     async fn wait_persisted(path: &std::path::Path, needle: &str) {
         let fut = async {
             loop {
@@ -374,84 +556,93 @@ mod tests {
         };
         assert!(
             timeout(Duration::from_secs(5), fut).await.is_ok(),
-            "hub did not persist {needle} in time"
+            "not persisted: {needle}"
         );
     }
 
-    /// The core mailbox guarantee: a member who was OFFLINE when a message was sent
-    /// receives it (from the backlog) the moment they connect.
-    #[tokio::test]
-    async fn offline_member_gets_backlog_on_reconnect() {
+    async fn spawn_hub(word: &str) -> (String, std::path::PathBuf) {
         let data =
-            std::env::temp_dir().join(format!("famchat-hub-test-{}.json", std::process::id()));
+            std::env::temp_dir().join(format!("famchat-hub-{}-{}.json", word, std::process::id()));
         let _ = std::fs::remove_file(&data);
         let hub = Arc::new(Mutex::new(Hub::load(data.clone())));
-
         let listener = TcpTransport.listen("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr();
-        let word = "family-word".to_string();
-        {
-            let hub = hub.clone();
-            let word = word.clone();
-            tokio::spawn(async move { serve(listener, word, hub).await });
-        }
+        let word = word.to_string();
+        tokio::spawn(async move { serve(listener, word, hub).await });
+        (addr, data)
+    }
 
-        // Alice connects and sends a message while Bob is NOT connected.
-        let (sa, mut ra) = connect(&addr, &word, "devA", "Alice").await;
-        let _ = timeout(Duration::from_secs(5), ra.recv()).await; // consume Welcome
-        sa.send(Frame::Group(
+    /// The family room is a mailbox: a message sent while a member is offline is
+    /// waiting for them when they sign in.
+    #[tokio::test]
+    async fn family_room_offline_backlog() {
+        let (addr, data) = spawn_hub("famA").await;
+
+        let (sa, mut ra) = connect(&addr, "famA", "dA", "Alice").await;
+        wait_for(&mut ra, |m| matches!(m, ServerMsg::Welcome { .. }))
+            .await
+            .unwrap();
+        send(
+            &sa,
             ClientMsg::Send {
+                conv: FAMILY_ROOM.into(),
                 text: "dinner at 6".into(),
-            }
-            .encode(),
-        ))
-        .await
-        .unwrap();
-        // Deterministically wait until the hub has logged + persisted it.
+            },
+        )
+        .await;
         wait_persisted(&data, "dinner at 6").await;
 
-        // Bob connects later — he was offline when it was sent, but gets it now.
-        let (_sb, mut rb) = connect(&addr, &word, "devB", "Bob").await;
-        assert_eq!(next_msg_text(&mut rb).await.as_deref(), Some("dinner at 6"));
+        let (_sb, mut rb) = connect(&addr, "famA", "dB", "Bob").await;
+        let got = wait_for(&mut rb, |m| {
+            matches!(m, ServerMsg::Msg { conv, text, .. } if conv == FAMILY_ROOM && text == "dinner at 6")
+        })
+        .await;
+        assert!(got.is_some(), "Bob should get the family-room backlog");
 
-        drop(sa);
         let _ = std::fs::remove_file(&data);
     }
 
-    /// A message sent while BOTH are online is delivered live to the other member
-    /// (and not echoed back to its sender).
+    /// A DM created + written while the other person is offline shows up as a
+    /// conversation for them, with the message, when they sign in.
     #[tokio::test]
-    async fn live_delivery_to_other_member() {
-        let data =
-            std::env::temp_dir().join(format!("famchat-hub-live-{}.json", std::process::id()));
-        let _ = std::fs::remove_file(&data);
-        let hub = Arc::new(Mutex::new(Hub::load(data.clone())));
-        let listener = TcpTransport.listen("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr();
-        let word = "w".to_string();
-        {
-            let hub = hub.clone();
-            let word = word.clone();
-            tokio::spawn(async move { serve(listener, word, hub).await });
-        }
+    async fn dm_is_created_and_delivered_offline() {
+        let (addr, data) = spawn_hub("famB").await;
 
-        let (_sa, mut ra) = connect(&addr, &word, "devA", "Alice").await;
-        let (sb, mut rb) = connect(&addr, &word, "devB", "Bob").await;
-        // Drain welcomes — receiving Alice's Welcome proves she's registered online,
-        // so Bob's message below reaches her live.
-        let _ = timeout(Duration::from_secs(5), ra.recv()).await;
-        let _ = timeout(Duration::from_secs(5), rb.recv()).await;
-
-        sb.send(Frame::Group(
+        let (sa, mut ra) = connect(&addr, "famB", "dA", "Alice").await;
+        wait_for(&mut ra, |m| matches!(m, ServerMsg::Welcome { .. }))
+            .await
+            .unwrap();
+        send(&sa, ClientMsg::OpenDm { peer: "dB".into() }).await;
+        wait_for(&mut ra, |m| matches!(m, ServerMsg::Conv { .. }))
+            .await
+            .unwrap();
+        let cid = dm_id("dA", "dB");
+        send(
+            &sa,
             ClientMsg::Send {
-                text: "on my way".into(),
-            }
-            .encode(),
-        ))
-        .await
-        .unwrap();
-        // Alice (the other member) receives it live.
-        assert_eq!(next_msg_text(&mut ra).await.as_deref(), Some("on my way"));
+                conv: cid.clone(),
+                text: "just you".into(),
+            },
+        )
+        .await;
+        wait_persisted(&data, "just you").await;
+
+        // Bob signs in later: his Welcome lists the DM, and its message is delivered.
+        let (_sb, mut rb) = connect(&addr, "famB", "dB", "Bob").await;
+        let w = wait_for(&mut rb, |m| matches!(m, ServerMsg::Welcome { .. }))
+            .await
+            .unwrap();
+        if let ServerMsg::Welcome { convs, .. } = w {
+            assert!(
+                convs.iter().any(|c| c.id == cid && c.kind == ConvKind::Dm),
+                "Bob should see the DM"
+            );
+        }
+        let got = wait_for(&mut rb, |m| {
+            matches!(m, ServerMsg::Msg { conv, text, .. } if *conv == cid && text == "just you")
+        })
+        .await;
+        assert!(got.is_some(), "Bob should receive the DM message he missed");
 
         let _ = std::fs::remove_file(&data);
     }
