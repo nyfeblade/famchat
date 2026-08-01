@@ -1186,6 +1186,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "famchat-hub"
+version = "0.1.1"
+dependencies = [
+ "directories",
+ "famchat-core",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

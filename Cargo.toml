@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/famchat-core", "src-tauri"]
+members = ["crates/famchat-core", "crates/famchat-hub", "src-tauri"]
 resolver = "2"
 
 [workspace.package]

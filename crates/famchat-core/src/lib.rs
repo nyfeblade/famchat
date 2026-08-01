@@ -18,6 +18,7 @@ pub mod group;
 pub mod grouphost;
 pub mod groupsession;
 pub mod history;
+pub mod hub;
 pub mod identity;
 pub mod message;
 pub mod ratchet;
@@ -31,6 +32,7 @@ pub use group::{GroupError, ReceiverState, SenderKeyDistribution, SenderKeyState
 pub use grouphost::{GroupClient, GroupHandle, GroupHost, GroupReceiver};
 pub use groupsession::{GroupMember, GroupMsg, MemberId};
 pub use history::{Conversation, ConversationSummary, History, StoredMessage};
+pub use hub::{ClientMsg, ServerMsg};
 pub use identity::{fingerprint, Identity};
 pub use message::{
     human_size, FileGate, Frame, Incoming, CHUNK_SIZE, MAX_CONCURRENT_FILES, MAX_FILE_SIZE,
