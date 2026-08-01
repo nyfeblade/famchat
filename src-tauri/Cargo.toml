@@ -1,6 +1,6 @@
 [package]
 name = "famchat"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "FamChat — a simple, private chat for your home network"
 authors = ["nyfe"]
@@ -18,6 +18,9 @@ tokio = { version = "1", features = ["sync"] }
 famchat-core = { path = "../crates/famchat-core" }
 # Native OS notifications (macOS Notification Center / Windows toast / Linux).
 tauri-plugin-notification = "2"
+# Signed auto-update from GitHub Releases (+ process for the post-install relaunch).
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [features]
 # used by `tauri build` for production asset embedding

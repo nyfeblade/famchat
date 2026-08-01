@@ -621,10 +621,48 @@
     closeSettings();
   });
 
+  // ---- Updates (signed auto-update from GitHub Releases) ----------------------
+  const updBtn = document.getElementById('set-check-upd');
+  const updDesc = document.getElementById('set-upd-desc');
+  const autoUpd = document.getElementById('set-autoupd');
+  if (autoUpd) {
+    autoUpd.checked = localStorage.getItem('famchat-autoupdate') !== 'off';
+    autoUpd.addEventListener('change', () => { try { localStorage.setItem('famchat-autoupdate', autoUpd.checked ? 'on' : 'off'); } catch (e) {} });
+  }
+  function setUpdDesc(t) { if (updDesc) updDesc.textContent = t; }
+  async function checkForUpdate(manual) {
+    if (!T.updater || !T.updater.check) { if (manual) await askConfirm({ title: 'Updates unavailable', message: 'This build can’t check for updates.', confirmLabel: 'OK' }); return; }
+    if (manual) setUpdDesc('Checking…');
+    let update;
+    try { update = await T.updater.check(); }
+    catch (e) { setUpdDesc('Couldn’t check for updates.'); if (manual) await askConfirm({ title: 'Couldn’t check', message: '' + e, confirmLabel: 'OK' }); return; }
+    const available = update && update.available !== false;
+    if (!available) {
+      setUpdDesc('You’re on the latest version.');
+      if (manual) await askConfirm({ title: 'Up to date', message: 'You’re running the latest version of FamChat.', confirmLabel: 'OK' });
+      return;
+    }
+    const ver = update.version || '';
+    setUpdDesc('Update available: ' + ver);
+    const ok = await askConfirm({ title: 'Update available', message: 'FamChat ' + ver + ' is ready to install. Update now? FamChat will restart.', confirmLabel: 'Update now' });
+    if (!ok) return;
+    try {
+      setUpdDesc('Downloading…');
+      await update.downloadAndInstall(() => {});
+      if (T.process && T.process.relaunch) await T.process.relaunch();
+    } catch (e) {
+      setUpdDesc('Update failed.');
+      await askConfirm({ title: 'Update failed', message: '' + e, confirmLabel: 'OK' });
+    }
+  }
+  if (updBtn) updBtn.addEventListener('click', () => checkForUpdate(true));
+
   async function boot() {
     ensureNotifyPermission();
     try { renderSidebar(await invoke('list_conversations')); } catch (e) { renderSidebar([]); }
     showEmpty();
+    // A quiet check on launch (only prompts if there's actually an update).
+    if (localStorage.getItem('famchat-autoupdate') !== 'off') setTimeout(() => checkForUpdate(false), 3000);
   }
   boot();
 })();

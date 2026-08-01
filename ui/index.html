@@ -335,6 +335,8 @@
   .set-danger .set-label { color:var(--danger); }
   .set-danger .set-desc { color:var(--ink-2); margin:6px 0 13px; }
   .ov-btn.danger-btn { background:var(--danger); color:#fff; }
+  .ov-btn.set-btn-sm { width:auto; padding:8px 15px; font-size:13px; flex:none; }
+  .upd-opt { margin:13px 0 2px; }
   .set-ver { text-align:center; font-family:var(--font-mono); font-size:11px; letter-spacing:0.04em; color:var(--ink-3); margin-top:16px; }
   .confirm-card { width:344px; }
   .cf-msg { font-size:13px; line-height:1.55; color:var(--ink-2); margin:11px 0 20px; }
@@ -444,6 +446,11 @@
         <button class="ov-seg-btn" id="set-dark">Dark</button>
       </div>
     </div>
+    <div class="set-row">
+      <div><div class="set-label">Updates</div><div class="set-desc" id="set-upd-desc">FamChat can update itself from signed releases.</div></div>
+      <button class="ov-btn set-btn-sm" id="set-check-upd">Check now</button>
+    </div>
+    <label class="ov-opt upd-opt"><input type="checkbox" id="set-autoupd" /> Check for updates when FamChat starts</label>
     <div class="set-danger">
       <div class="set-label">Danger zone</div>
       <div class="set-desc">Permanently delete every saved chat stored on this device. This cannot be undone.</div>

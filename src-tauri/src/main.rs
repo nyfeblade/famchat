@@ -697,6 +697,8 @@ async fn drive(app: AppHandle, established: Result<famchat_core::session::Establ
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(ChatState::default())
         .setup(|app| {
             // Open the plaintext transcript up front (no passphrase) so history is
