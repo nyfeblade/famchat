@@ -30,7 +30,20 @@
   const convoList = document.getElementById('convoList');
   let sidebarSums = [];
   let activeName = '';
-  let hosting = false;   // true when we started (host) this chat, so we keep the invite address handy
+  let hosting = false;
+  let hubActive = false;   // true while connected to a family hub (persistent room)
+
+  // A stable per-device id so a hub can hold messages addressed to this device.
+  function deviceId() {
+    let id = null;
+    try { id = localStorage.getItem('famchat-device-id'); } catch (e) {}
+    if (!id) {
+      id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      try { localStorage.setItem('famchat-device-id', id); } catch (e) {}
+    }
+    return id;
+  }   // true when we started (host) this chat, so we keep the invite address handy
 
   const leaveBtn = document.getElementById('leaveBtn');
   const attachBtn = document.querySelector('.composer .attach');
@@ -97,14 +110,25 @@
     else if (e.key === 'Enter') { e.preventDefault(); closeConfirm(true); }
   });
 
+  function forgetHub() {
+    hubActive = false;
+    try {
+      localStorage.removeItem('famchat-hub-address');
+      localStorage.removeItem('famchat-hub-word');
+      localStorage.removeItem('famchat-hub-name');
+    } catch (e) {}
+  }
   if (leaveBtn) leaveBtn.addEventListener('click', async () => {
     const ok = await askConfirm({
-      title: 'Leave this chat?',
-      message: demoMode ? 'This exits the demo.' : 'Ends the current chat. Your saved messages stay — you can reopen it anytime.',
-      confirmLabel: 'Leave',
+      title: hubActive ? 'Disconnect from the hub?' : 'Leave this chat?',
+      message: demoMode ? 'This exits the demo.'
+        : hubActive ? 'Stops using the family hub on this device. Your saved messages stay, and you can reconnect with the hub address anytime.'
+        : 'Ends the current chat. Your saved messages stay — you can reopen it anytime.',
+      confirmLabel: hubActive ? 'Disconnect' : 'Leave',
     });
     if (!ok) return;
     if (demoMode) { exitDemo(); return; }
+    if (hubActive) forgetHub();
     try { await invoke('disconnect'); } catch (e) {}
   });
 
@@ -315,15 +339,19 @@
       // modal and hand them the address via the in-chat banner instead.
       if (!s.group) showHostAddress(s.address);
     }
-    else if (s.state === 'connecting') { if (invStatus) invStatus.innerHTML = spin + 'Connecting… you’re in as soon as the family word matches.'; setFp('<span class="fpdot"></span> connecting…'); }
+    else if (s.state === 'connecting') {
+      if (invStatus) invStatus.innerHTML = spin + (s.transport === 'hub' ? 'Connecting to your family hub…' : 'Connecting… you’re in as soon as the family word matches.');
+      setFp('<span class="fpdot"></span> ' + (s.reconnecting ? 'reconnecting…' : 'connecting…'));
+    }
     else if (s.state === 'connected') {
+      hubActive = s.transport === 'hub';
       if (overlay) overlay.style.display = 'none';
       showConnectForm();
       startThread(s.conversation_title || activeName || 'Chat');
       if (leaveBtn) leaveBtn.style.display = 'flex';
-      if (attachBtn) attachBtn.style.display = (s.transport === 'group') ? 'none' : 'flex';
+      if (attachBtn) attachBtn.style.display = (s.transport === 'group' || s.transport === 'hub') ? 'none' : 'flex';
       if (s.conversation_id) ensureSidebar(s.conversation_id, s.conversation_title);
-      setFp('<span class="fpdot"></span> on your home network');
+      setFp('<span class="fpdot"></span> ' + (s.transport === 'hub' ? 'connected to your family hub' : 'on your home network'));
       // Host of a group room: keep the address visible so you can still invite people.
       if (hosting && s.transport === 'group' && inviteAddress) showInviteBanner(inviteAddress);
     }
@@ -493,16 +521,27 @@
     }
   });
 
-  // ---- Start / Join a chat ----------------------------------------------------
+  // ---- Start / Join / Family hub ----------------------------------------------
   let ovMode = 'start';
   const ovGo = document.getElementById('ov-go');
   const ovAddrWrap = document.getElementById('ov-addr-wrap');
+  const ovAddrLabel = document.getElementById('ov-addr-label');
+  const ovAddrHint = document.getElementById('ov-addr-hint');
+  const ovNameLabel = document.getElementById('ov-name-label');
+  const ovNameInput = document.getElementById('ov-name');
+  const ovOpts = document.querySelector('.ov-opts');
   const segStart = document.getElementById('seg-start');
   const segJoin = document.getElementById('seg-join');
+  const segHub = document.getElementById('seg-hub');
   const ovExplain = document.getElementById('ov-explain');
   const ovGroupCb = document.getElementById('ov-group');
   function explainText(m) {
     const isGroup = ovGroupCb && ovGroupCb.checked;
+    if (m === 'hub') {
+      return '<span class="step"><span class="n">1</span>Enter your family hub’s address — the always-on laptop.</span>' +
+             '<span class="step"><span class="n">2</span>Type your family word and your name.</span>' +
+             '<span class="step"><span class="n">3</span>Connect. You stay signed in, and get messages even ones sent while you were away.</span>';
+    }
     if (m === 'join') {
       return '<span class="step"><span class="n">1</span>Paste the address the host shared with you above.</span>' +
              '<span class="step"><span class="n">2</span>Type the family word everyone agreed on.</span>' +
@@ -516,19 +555,47 @@
     ovMode = m;
     segStart.classList.toggle('on', m === 'start');
     segJoin.classList.toggle('on', m === 'join');
-    ovAddrWrap.style.display = m === 'join' ? 'block' : 'none';
-    ovGo.textContent = m === 'join' ? 'Join' : 'Start';
+    if (segHub) segHub.classList.toggle('on', m === 'hub');
+    ovAddrWrap.style.display = (m === 'join' || m === 'hub') ? 'block' : 'none';
+    if (ovOpts) ovOpts.style.display = m === 'hub' ? 'none' : 'flex';
+    if (ovAddrLabel) ovAddrLabel.textContent = m === 'hub' ? 'Hub address' : 'Their address';
+    if (ovAddrHint) ovAddrHint.textContent = m === 'hub'
+      ? 'The address of your always-on hub laptop, e.g. 192.168.1.50'
+      : 'The address the host shared with you. However they sent it (text, a note) is fine.';
+    if (ovNameLabel) ovNameLabel.textContent = m === 'hub' ? 'Your name' : 'Chat name';
+    if (ovNameInput) ovNameInput.placeholder = m === 'hub' ? 'e.g. Mom — what your family sees' : 'e.g. Mom, or Family Room';
+    ovGo.textContent = m === 'join' ? 'Join' : (m === 'hub' ? 'Connect' : 'Start');
     if (ovExplain) ovExplain.innerHTML = explainText(m);
     if (ovMsg) ovMsg.textContent = '';
   }
   if (ovGroupCb) ovGroupCb.addEventListener('change', () => { if (ovExplain) ovExplain.innerHTML = explainText(ovMode); });
   if (segStart) segStart.addEventListener('click', () => setMode('start'));
   if (segJoin) segJoin.addEventListener('click', () => setMode('join'));
+  if (segHub) segHub.addEventListener('click', () => setMode('hub'));
 
   if (ovGo) ovGo.addEventListener('click', async () => {
     if (demoMode) { demoMode = false; if (peerName) peerName.childNodes[0].nodeValue = 'Chat '; }
     const code = document.getElementById('ov-code').value.trim();
-    if (!code) { ovMsg.textContent = 'Pick a family word first.'; return; }
+    if (!code) { ovMsg.textContent = 'Enter your family word first.'; return; }
+    // Family hub: connect to the always-on room and remember it for next launch.
+    if (ovMode === 'hub') {
+      const addr = document.getElementById('ov-addr').value.trim();
+      if (!addr) { ovMsg.textContent = 'Enter the hub address.'; return; }
+      const yourName = (ovNameInput && ovNameInput.value || '').trim();
+      const id = deviceId();
+      try {
+        localStorage.setItem('famchat-hub-address', addr);
+        localStorage.setItem('famchat-hub-word', code);
+        localStorage.setItem('famchat-hub-name', yourName);
+      } catch (e) {}
+      hubActive = true;
+      activeName = 'Family';
+      showInvitePanel('join');
+      if (invStatus) invStatus.innerHTML = spin + 'Connecting to your family hub…';
+      try { await invoke('connect_hub', { address: addr, code, name: yourName, id }); }
+      catch (err) { if (invStatus) invStatus.textContent = 'Error: ' + err; }
+      return;
+    }
     const group = !!(ovGroupCb && ovGroupCb.checked);
     const name = (document.getElementById('ov-name').value || '').trim();
     activeName = name;
@@ -661,6 +728,20 @@
     ensureNotifyPermission();
     try { renderSidebar(await invoke('list_conversations')); } catch (e) { renderSidebar([]); }
     showEmpty();
+    // If a family hub is set up, reconnect to it automatically.
+    try {
+      const haddr = localStorage.getItem('famchat-hub-address');
+      if (haddr) {
+        hubActive = true;
+        activeName = 'Family';
+        invoke('connect_hub', {
+          address: haddr,
+          code: localStorage.getItem('famchat-hub-word') || '',
+          name: localStorage.getItem('famchat-hub-name') || '',
+          id: deviceId(),
+        }).catch(() => {});
+      }
+    } catch (e) {}
     // A quiet check on launch (only prompts if there's actually an update).
     if (localStorage.getItem('famchat-autoupdate') !== 'off') setTimeout(() => checkForUpdate(false), 3000);
   }

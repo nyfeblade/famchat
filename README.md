@@ -35,6 +35,15 @@ Grab it from the **[download page](https://nyfeblade.github.io/famchat/)** or th
 You get a desktop notification when a message arrives and FamChat isn't the window
 you're looking at.
 
+### Offline messages (optional)
+
+By default everyone has to be online at the same time. If you have a machine that
+stays on (a spare laptop, a home server), you can run the **FamChat Hub** on it —
+a tiny always-on relay that holds messages for whoever's offline and delivers them
+when they reconnect, so you can message someone whose FamChat is closed. It's a
+trusted relay on your own network. See **[HUB.md](HUB.md)** to set it up; then in
+FamChat use **+ → Family hub**.
+
 ## Private by design
 
 - Messages are **end‑to‑end encrypted** in flight (Noise protocol; the family word

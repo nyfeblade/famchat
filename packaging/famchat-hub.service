@@ -1,0 +1,15 @@
+[Unit]
+Description=FamChat Hub (always-on family relay + mailbox)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The family word (and optional bind address) live in this file, mode 0600.
+EnvironmentFile=%h/.config/famchat-hub/env
+ExecStart=%h/.local/bin/famchat-hub
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

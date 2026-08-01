@@ -11,9 +11,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use famchat_core::{
-    human_size, Auth, ConversationSummary, FileGate, Frame, GroupClient, GroupHandle, GroupHost,
-    GroupReceiver, History, Incoming, Link, Listener, SealedChannel, SealedSender, StoredMessage,
-    TcpTransport, Transport, CHUNK_SIZE, MAX_CONCURRENT_FILES, MAX_FILE_SIZE,
+    human_size, Auth, ClientMsg, ConversationSummary, FileGate, Frame, GroupClient, GroupHandle,
+    GroupHost, GroupReceiver, History, Incoming, Link, Listener, SealedChannel, SealedSender,
+    ServerMsg, StoredMessage, TcpTransport, Transport, CHUNK_SIZE, MAX_CONCURRENT_FILES,
+    MAX_FILE_SIZE,
 };
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
@@ -37,6 +38,9 @@ struct ChatState {
     /// task's decision on an incoming file offer `(id, accepted)`. Incoming files
     /// are NOT written to disk until the user accepts (consent gate).
     file_decisions: Mutex<Option<tokio::sync::mpsc::UnboundedSender<([u8; 16], bool)>>>,
+    /// When connected to a family hub, outgoing text is handed to the persistent
+    /// hub task through this channel (Some => a hub connection is active).
+    hub_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
 }
 
 /// The conversation currently being written to. FamChat always keeps history, so
@@ -124,6 +128,7 @@ impl ChatState {
         *self.group.lock().await = None;
         *self.active.lock().await = None;
         *self.file_decisions.lock().await = None;
+        *self.hub_tx.lock().await = None;
     }
 }
 
@@ -251,6 +256,18 @@ async fn connect(
 #[tauri::command]
 async fn send_message(app: AppHandle, text: String) -> Result<(), String> {
     let st = app.state::<ChatState>();
+    // A family hub takes precedence: hand the text to the persistent hub task,
+    // which sends it (or queues it briefly if the hub is momentarily unreachable).
+    {
+        let tx = st.hub_tx.lock().await;
+        if let Some(tx) = tx.as_ref() {
+            tx.send(text.clone())
+                .map_err(|_| "the hub connection is down".to_string())?;
+            let _ = app.emit("message", json!({ "text": text, "incoming": false }));
+            persist_msg(&app, "You", &text, false).await;
+            return Ok(());
+        }
+    }
     // A live group takes precedence over a 2-party channel.
     {
         let g = st.group.lock().await;
@@ -277,6 +294,130 @@ async fn send_message(app: AppHandle, text: String) -> Result<(), String> {
     let _ = app.emit("message", json!({ "text": text, "incoming": false }));
     persist_msg(&app, "You", &text, false).await;
     Ok(())
+}
+
+/// Connect to a family hub (an always-on relay + mailbox) as the standing family
+/// room. The connection is persistent and auto-reconnects; while it's up, sends go
+/// through the hub and you receive anything you missed when you were offline.
+#[tauri::command]
+async fn connect_hub(
+    app: AppHandle,
+    address: String,
+    code: String,
+    name: String,
+    id: String,
+) -> Result<(), String> {
+    let target = normalize_target(&address);
+    // The hub is one standing room; key its transcript as "Family".
+    set_active(&app, "Family", "Family").await;
+    let _ = app.emit(
+        "status",
+        json!({ "state": "connecting", "address": target, "transport": "hub" }),
+    );
+    let app2 = app.clone();
+    let handle = tauri::async_runtime::spawn(async move {
+        drive_hub(app2, target, code, id, name).await;
+    });
+    track(&app, handle).await;
+    Ok(())
+}
+
+/// Maintain a persistent connection to the hub: (re)connect, say Hello, then relay
+/// the family room — outgoing text from `hub_tx`, incoming messages to the UI (with
+/// an Ack so the hub can stop holding them). Loops forever until the task is aborted
+/// by a teardown, reconnecting after a short pause whenever the link drops.
+async fn drive_hub(
+    app: AppHandle,
+    target: String,
+    code: String,
+    device_id: String,
+    my_name: String,
+) {
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    *app.state::<ChatState>().hub_tx.lock().await = Some(out_tx);
+    // Highest seq we've already shown — dedups the hub's re-send of anything we
+    // hadn't acked before a drop, across reconnects.
+    let mut last_seq: u64 = 0;
+
+    loop {
+        let mut link = Link::Connect {
+            transport: build_transport(),
+            target: target.clone(),
+            auth: Auth::Code(code.clone()),
+        };
+        let est = match link.establish().await {
+            Ok(e) => e,
+            Err(e) => {
+                let _ = app.emit(
+                    "status",
+                    json!({ "state": "error", "detail": e.to_string() }),
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                continue;
+            }
+        };
+        let (sender, mut receiver) = match SealedChannel::establish(est).await {
+            Ok(pair) => pair,
+            Err(_) => {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                continue;
+            }
+        };
+
+        // Introduce ourselves (stable device id + display name).
+        let _ = sender
+            .send(Frame::Group(
+                ClientMsg::Hello {
+                    id: device_id.clone(),
+                    name: my_name.clone(),
+                }
+                .encode(),
+            ))
+            .await;
+        let (cid, ctitle) = active_ids(&app).await;
+        let _ = app.emit(
+            "status",
+            json!({ "state": "connected", "transport": "hub",
+                    "conversation_id": cid, "conversation_title": ctitle }),
+        );
+
+        loop {
+            tokio::select! {
+                Some(text) = out_rx.recv() => {
+                    if sender.send(Frame::Group(ClientMsg::Send { text }.encode())).await.is_err() {
+                        break;
+                    }
+                }
+                frame = receiver.recv() => {
+                    match frame {
+                        Some(Frame::Group(b)) => match ServerMsg::decode(&b) {
+                            Some(ServerMsg::Msg { seq, name, text, .. }) => {
+                                if seq > last_seq {
+                                    last_seq = seq;
+                                    let _ = app.emit("message",
+                                        json!({ "text": text, "incoming": true, "from": name }));
+                                    persist_msg(&app, &name, &text, true).await;
+                                    let _ = sender
+                                        .send(Frame::Group(ClientMsg::Ack { seq }.encode()))
+                                        .await;
+                                }
+                            }
+                            Some(ServerMsg::Welcome) | None => {}
+                        },
+                        Some(_) => {}
+                        None => break, // link dropped — reconnect
+                    }
+                }
+            }
+        }
+
+        // Dropped: let the UI show we're reconnecting, then loop and dial again.
+        let _ = app.emit(
+            "status",
+            json!({ "state": "connecting", "transport": "hub", "reconnecting": true }),
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
 }
 
 /// A random 16-byte file-transfer id (reuses the vetted 128-bit id generator).
@@ -718,6 +859,7 @@ fn main() {
             load_conversation,
             host,
             connect,
+            connect_hub,
             send_message,
             host_group,
             join_group,

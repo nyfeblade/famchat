@@ -385,14 +385,15 @@
     </div>
     <div id="ov-form">
     <div class="ov-seg">
-      <button class="ov-seg-btn on" id="seg-start">Start a chat</button>
-      <button class="ov-seg-btn" id="seg-join">Join a chat</button>
+      <button class="ov-seg-btn on" id="seg-start">Start</button>
+      <button class="ov-seg-btn" id="seg-join">Join</button>
+      <button class="ov-seg-btn" id="seg-hub">Family hub</button>
     </div>
     <div id="ov-explain" class="ov-explain"></div>
     <div class="ov-field" id="ov-addr-wrap" style="display:none">
-      <label>Their address</label>
+      <label id="ov-addr-label">Their address</label>
       <input id="ov-addr" placeholder="paste the address they shared" />
-      <div class="ov-hint">The address the host shared with you. However they sent it (text, a note) is fine.</div>
+      <div class="ov-hint" id="ov-addr-hint">The address the host shared with you. However they sent it (text, a note) is fine.</div>
     </div>
     <div class="ov-field">
       <label>Family word — everyone types the same one</label>
@@ -403,7 +404,7 @@
       <label class="ov-opt"><input type="checkbox" id="ov-group" /> Group — more than two people</label>
     </div>
     <div class="ov-field" id="ov-name-wrap">
-      <label>Chat name</label>
+      <label id="ov-name-label">Chat name</label>
       <input id="ov-name" placeholder="e.g. Mom, or Family Room" />
     </div>
     <button id="ov-go" class="ov-btn">Start</button>

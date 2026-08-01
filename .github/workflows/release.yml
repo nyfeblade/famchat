@@ -65,3 +65,14 @@ jobs:
           # Publish latest.json so installed copies can find and verify updates.
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+      # Also ship the headless hub server (Linux) so it can be dropped onto an
+      # always-on machine. See HUB.md.
+      - name: Build and attach the hub server (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo build --release -p famchat-hub
+          cp target/release/famchat-hub famchat-hub-linux-x86_64
+          gh release upload "${{ github.ref_name }}" famchat-hub-linux-x86_64 packaging/famchat-hub.service --clobber
