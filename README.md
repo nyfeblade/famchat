@@ -2,10 +2,16 @@
 
 A simple, private chat for the people on your home network.
 
-No accounts, no phone numbers, no servers, no cloud. One person starts a chat and
-shares an address; everyone else on the same Wi‑Fi joins with a shared family word.
-Messages, photos, and files go straight between your devices and never leave your
-network. Works on **macOS, Windows, and Linux**.
+No accounts, no phone numbers, no cloud. One person starts a chat and shares an
+address; everyone else on the same Wi‑Fi joins with a shared family word. Messages,
+photos, and files go straight between your devices and never leave your network.
+Works on **macOS, Windows, and Linux**.
+
+Want offline messages? FamChat ships with an optional **home‑server hub** — a tiny
+always‑on program you run on a spare machine on your network. It acts as a mailbox:
+it holds messages for family members who are offline and delivers them when they
+come back, so you can message someone even when their FamChat is closed. See
+[HUB.md](HUB.md). (No hub, no server — the hub is entirely optional.)
 
 <p align="center"><img src="src-tauri/icons/128x128.png" width="96" alt="FamChat" /></p>
 
@@ -48,7 +54,9 @@ FamChat use **+ → Family hub**.
 
 - Messages are **end‑to‑end encrypted** in flight (Noise protocol; the family word
   authenticates who gets in via a PAKE, so it's never sent over the wire).
-- There is **no server** and no account — devices talk directly over your LAN.
+- By default there is **no server** and no account — devices talk directly over
+  your LAN. (The optional home hub is the one exception, and it runs on your own
+  machine, not anyone else's.)
 - History is stored **only on your own device**, and you can wipe it anytime from
   Settings.
 
