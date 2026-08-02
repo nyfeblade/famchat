@@ -554,7 +554,7 @@
   function explainText(m) {
     const isGroup = ovGroupCb && ovGroupCb.checked;
     if (m === 'hub') {
-      return '<span class="step"><span class="n">1</span>Enter your family hub’s address — the always-on laptop.</span>' +
+      return '<span class="step"><span class="n">1</span>Enter the hub’s address — the always-on machine’s IP with <b>:9000</b>, or <b>localhost:9000</b> if the hub is on this computer.</span>' +
              '<span class="step"><span class="n">2</span>Type your family word and your name.</span>' +
              '<span class="step"><span class="n">3</span>Connect. You stay signed in, and get messages even ones sent while you were away.</span>';
     }
@@ -576,8 +576,10 @@
     if (ovOpts) ovOpts.style.display = m === 'hub' ? 'none' : 'flex';
     if (ovAddrLabel) ovAddrLabel.textContent = m === 'hub' ? 'Hub address' : 'Their address';
     if (ovAddrHint) ovAddrHint.textContent = m === 'hub'
-      ? 'The address of your always-on hub laptop, e.g. 192.168.1.50'
+      ? 'If the hub runs on this computer, use localhost:9000. Otherwise it’s the hub machine’s address — whoever set it up can find it with "hostname -I" on that machine, e.g. 192.168.1.50:9000.'
       : 'The address the host shared with you. However they sent it (text, a note) is fine.';
+    const ovAddrInput = document.getElementById('ov-addr');
+    if (ovAddrInput) ovAddrInput.placeholder = m === 'hub' ? 'e.g. 192.168.1.50:9000 or localhost:9000' : 'paste the address they shared';
     if (ovNameLabel) ovNameLabel.textContent = m === 'hub' ? 'Your name' : 'Chat name';
     if (ovNameInput) ovNameInput.placeholder = m === 'hub' ? 'e.g. Mom — what your family sees' : 'e.g. Mom, or Family Room';
     ovGo.textContent = m === 'join' ? 'Join' : (m === 'hub' ? 'Connect' : 'Start');

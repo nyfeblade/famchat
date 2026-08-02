@@ -158,7 +158,21 @@ fn can_self_update() -> bool {
     {
         std::env::var_os("APPIMAGE").is_some()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        // If the app is running from the read-only DMG (/Volumes/…) or was launched
+        // from Downloads under Gatekeeper "App Translocation" (a randomized, read-only
+        // mount), the updater can't write itself → EROFS. Don't attempt it there; the
+        // UI points to the download page instead. (Installed in /Applications, it can.)
+        match std::env::current_exe() {
+            Ok(p) => {
+                let s = p.to_string_lossy();
+                !(s.contains("/AppTranslocation/") || s.starts_with("/Volumes/"))
+            }
+            Err(_) => true,
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         true
     }

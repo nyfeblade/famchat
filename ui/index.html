@@ -153,15 +153,16 @@
   .day::before, .day::after { content: ""; height: 1px; background: var(--line); flex: 1; }
   .day span { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
 
-  /* Slack-style flat rows: avatar + bold name + time, then full-width text.
-     Consecutive lines from the same sender append under one header, so a burst of
-     messages reads as one block rather than a stack of bubbles. */
+  /* Chat rows: your messages align right, everyone else's left. Avatar sits on the
+     outer edge; consecutive lines from one sender group under a single header. */
   .msg { display: flex; gap: 12px; padding: 3px 28px; }
+  .msg.me { flex-direction: row-reverse; }
   .msg.first { margin-top: 14px; padding-top: 4px; }
   .msg:hover { background: var(--hover); }
   .msg-avatar { width: 38px; flex: none; }
   .msg-avatar .tile { width: 38px; height: 38px; border-radius: 10px; }
-  .msg-content { flex: 1; min-width: 0; }
+  .msg-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .msg.me .msg-content { align-items: flex-end; }
   .msg-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 3px; }
   .msg-name { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
   .msg.me .msg-name { color: var(--gold-ink); }
