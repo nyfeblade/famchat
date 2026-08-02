@@ -147,6 +147,23 @@ fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Whether this build can install an in-app update in place. On Linux the Tauri
+/// updater can only replace an AppImage — a `.deb`/`.rpm` or a loose binary can't
+/// self-install, so we must NOT attempt it (doing so overwrites the app with the
+/// AppImage and breaks it). In that case the UI points to the download page instead.
+/// macOS and Windows installs can always self-update.
+#[tauri::command]
+fn can_self_update() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("APPIMAGE").is_some()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
 /// All saved conversations, most-recently-active first, for the sidebar.
 #[tauri::command]
 async fn list_conversations(app: AppHandle) -> Result<Vec<ConversationSummary>, String> {
@@ -874,6 +891,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             version,
+            can_self_update,
             list_conversations,
             load_conversation,
             host,

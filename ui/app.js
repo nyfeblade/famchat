@@ -726,6 +726,20 @@
       return;
     }
     const ver = update.version || '';
+    // Only self-install if this build actually can (on Linux, only AppImages).
+    // Otherwise, never attempt it — that overwrites the app and breaks it. Point to
+    // the download page instead.
+    let canInstall = true;
+    try { canInstall = await invoke('can_self_update'); } catch (e) {}
+    if (!canInstall) {
+      setUpdDesc('Update available: ' + ver + ' — download it from the website.');
+      if (manual) await askConfirm({
+        title: 'Update available',
+        message: 'FamChat ' + ver + ' is available, but this install can’t update itself. Get the new version from:\n\nnyfeblade.github.io/famchat',
+        confirmLabel: 'OK',
+      });
+      return;
+    }
     setUpdDesc('Update available: ' + ver);
     const ok = await askConfirm({ title: 'Update available', message: 'FamChat ' + ver + ' is ready to install. Update now? FamChat will restart.', confirmLabel: 'Update now' });
     if (!ok) return;
