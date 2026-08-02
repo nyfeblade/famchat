@@ -150,8 +150,9 @@ fn version() -> String {
 /// Whether this build can install an in-app update in place. On Linux the Tauri
 /// updater can only replace an AppImage — a `.deb`/`.rpm` or a loose binary can't
 /// self-install, so we must NOT attempt it (doing so overwrites the app with the
-/// AppImage and breaks it). In that case the UI points to the download page instead.
-/// macOS and Windows installs can always self-update.
+/// AppImage and breaks it). On macOS the build is unsigned, so self-replacement is
+/// unreliable and can fail read-only ("error 30"); we don't attempt it there either.
+/// When this is false the UI points to the download page instead. Windows self-updates.
 #[tauri::command]
 fn can_self_update() -> bool {
     #[cfg(target_os = "linux")]
@@ -160,22 +161,60 @@ fn can_self_update() -> bool {
     }
     #[cfg(target_os = "macos")]
     {
-        // If the app is running from the read-only DMG (/Volumes/…) or was launched
-        // from Downloads under Gatekeeper "App Translocation" (a randomized, read-only
-        // mount), the updater can't write itself → EROFS. Don't attempt it there; the
-        // UI points to the download page instead. (Installed in /Applications, it can.)
-        match std::env::current_exe() {
-            Ok(p) => {
-                let s = p.to_string_lossy();
-                !(s.contains("/AppTranslocation/") || s.starts_with("/Volumes/"))
-            }
-            Err(_) => true,
-        }
+        // FamChat's macOS build is unsigned (no Apple Developer account), so replacing
+        // the .app in place is unreliable — depending on how macOS launched it, the swap
+        // can land on a read-only location and fail with EROFS ("error 30"), even from
+        // /Applications. So we never self-install on macOS: the app still checks for and
+        // announces updates, but sends you to the download page to grab the new .dmg.
+        // Reliable, and it never leaves the app half-updated.
+        false
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         true
     }
+}
+
+/// Open a URL in the user's default browser. Used to send people to the download
+/// page when the app can't self-update (see `can_self_update`).
+#[tauri::command]
+fn open_url(url: String) {
+    // Only ever called with our own https download page.
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+}
+
+/// Durable prefs (device identity + saved hub) read from the OS config dir. These
+/// live on disk beside the transcript — outside the app bundle — so a reinstall
+/// keeps your identity and reconnects you to your rooms.
+#[tauri::command]
+fn get_prefs() -> Result<famchat_core::Prefs, String> {
+    famchat_core::prefs::load().map_err(|e| e.to_string())
+}
+
+/// Persist the hub connection so the next launch reconnects automatically.
+#[tauri::command]
+fn save_hub_prefs(
+    address: String,
+    word: String,
+    name: String,
+) -> Result<famchat_core::Prefs, String> {
+    famchat_core::prefs::save_hub(&address, &word, &name).map_err(|e| e.to_string())
+}
+
+/// Forget the saved hub (keeps the device identity).
+#[tauri::command]
+fn clear_hub_prefs() -> Result<(), String> {
+    famchat_core::prefs::clear_hub().map_err(|e| e.to_string())
 }
 
 /// All saved conversations, most-recently-active first, for the sidebar.
@@ -906,6 +945,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             version,
             can_self_update,
+            open_url,
+            get_prefs,
+            save_hub_prefs,
+            clear_hub_prefs,
             list_conversations,
             load_conversation,
             host,

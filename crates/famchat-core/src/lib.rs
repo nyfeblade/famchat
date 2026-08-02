@@ -21,6 +21,7 @@ pub mod history;
 pub mod hub;
 pub mod identity;
 pub mod message;
+pub mod prefs;
 pub mod ratchet;
 pub mod session;
 pub mod transport;
@@ -37,6 +38,7 @@ pub use identity::{fingerprint, Identity};
 pub use message::{
     human_size, FileGate, Frame, Incoming, CHUNK_SIZE, MAX_CONCURRENT_FILES, MAX_FILE_SIZE,
 };
+pub use prefs::Prefs;
 pub use ratchet::{DoubleRatchet, RatchetError, HEADER_LEN, MAX_SKIP};
 pub use session::{Auth, Established, Link, SessionInfo};
 pub use transport::{AnyStream, Listener, TcpTransport, Transport};

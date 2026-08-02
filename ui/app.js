@@ -33,8 +33,15 @@
   let hosting = false;
   let hubActive = false;   // true while connected to a family hub (persistent room)
 
+  // Durable prefs (device id + saved hub) loaded from disk in boot(). They live
+  // beside the transcript, outside the app bundle, so a reinstall keeps identity
+  // and reconnects to your rooms.
+  let prefs = null;
+
   // A stable per-device id so a hub can hold messages addressed to this device.
+  // Prefer the disk-backed id (survives reinstalls); fall back to localStorage.
   function deviceId() {
+    if (prefs && prefs.device_id) return prefs.device_id;
     let id = null;
     try { id = localStorage.getItem('famchat-device-id'); } catch (e) {}
     if (!id) {
@@ -118,6 +125,8 @@
       localStorage.removeItem('famchat-hub-word');
       localStorage.removeItem('famchat-hub-name');
     } catch (e) {}
+    invoke('clear_hub_prefs').catch(() => {});
+    if (prefs) { prefs.hub_address = ''; prefs.hub_word = ''; prefs.hub_name = ''; }
   }
   if (leaveBtn) leaveBtn.addEventListener('click', async () => {
     const ok = await askConfirm({
@@ -606,6 +615,8 @@
         localStorage.setItem('famchat-hub-word', code);
         localStorage.setItem('famchat-hub-name', yourName);
       } catch (e) {}
+      // Also persist to the durable on-disk store so a reinstall reconnects here.
+      try { prefs = await invoke('save_hub_prefs', { address: addr, word: code, name: yourName }); } catch (e) {}
       hubActive = true;
       activeName = 'Family';
       showInvitePanel('join');
@@ -734,12 +745,15 @@
     let canInstall = true;
     try { canInstall = await invoke('can_self_update'); } catch (e) {}
     if (!canInstall) {
-      setUpdDesc('Update available: ' + ver + ' — download it from the website.');
-      if (manual) await askConfirm({
-        title: 'Update available',
-        message: 'FamChat ' + ver + ' is available, but this install can’t update itself. Get the new version from:\n\nnyfeblade.github.io/famchat',
-        confirmLabel: 'OK',
-      });
+      setUpdDesc('Update available: ' + ver + ' — get it from the website.');
+      if (manual) {
+        const go = await askConfirm({
+          title: 'Update available',
+          message: 'FamChat ' + ver + ' is available. Your messages stay put — updating just replaces the app, not your saved chats. Open the download page to get it?',
+          confirmLabel: 'Open download page',
+        });
+        if (go) { try { await invoke('open_url', { url: 'https://nyfeblade.github.io/famchat/' }); } catch (e) {} }
+      }
       return;
     }
     setUpdDesc('Update available: ' + ver);
@@ -876,18 +890,33 @@
 
   async function boot() {
     ensureNotifyPermission();
+    // Load durable prefs (device id + saved hub) from disk first. These ride beside
+    // the transcript, so an update keeps your identity and the hub to reconnect to.
+    try { prefs = await invoke('get_prefs'); } catch (e) { prefs = null; }
+    // One-time migration: older builds only remembered the hub in localStorage —
+    // copy it onto the durable store so it survives the next reinstall.
+    try {
+      const lsAddr = localStorage.getItem('famchat-hub-address');
+      if (prefs && !prefs.hub_address && lsAddr) {
+        prefs = await invoke('save_hub_prefs', {
+          address: lsAddr,
+          word: localStorage.getItem('famchat-hub-word') || '',
+          name: localStorage.getItem('famchat-hub-name') || '',
+        });
+      }
+    } catch (e) {}
     try { renderSidebar(await invoke('list_conversations')); } catch (e) { renderSidebar([]); }
     showEmpty();
-    // If a family hub is set up, reconnect to it automatically.
+    // If a family hub is set up, reconnect to it automatically (disk first, then LS).
     try {
-      const haddr = localStorage.getItem('famchat-hub-address');
+      const haddr = (prefs && prefs.hub_address) || localStorage.getItem('famchat-hub-address');
       if (haddr) {
         hubActive = true;
         activeName = 'Family';
         invoke('connect_hub', {
           address: haddr,
-          code: localStorage.getItem('famchat-hub-word') || '',
-          name: localStorage.getItem('famchat-hub-name') || '',
+          code: (prefs && prefs.hub_word) || localStorage.getItem('famchat-hub-word') || '',
+          name: (prefs && prefs.hub_name) || localStorage.getItem('famchat-hub-name') || '',
           id: deviceId(),
         }).catch(() => {});
       }

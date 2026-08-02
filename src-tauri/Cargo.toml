@@ -1,6 +1,6 @@
 [package]
 name = "famchat"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "FamChat — a simple, private chat for your home network"
 authors = ["nyfe"]
